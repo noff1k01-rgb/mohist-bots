@@ -40,7 +40,7 @@ keep_alive()
 print("✅ Keep-Alive запущен!")
 
 # =====================================================
-#  🎵  НАСТРОЙКИ YT-DLP (С ЗАДЕРЖКАМИ)
+#  🎵  НАСТРОЙКИ YT-DLP (ПОЛНОСТЬЮ ОПТИМИЗИРОВАННЫЕ)
 # =====================================================
 
 ytdl_format_options = {
@@ -56,23 +56,28 @@ ytdl_format_options = {
     'default_search': 'auto',
     'source_address': '0.0.0.0',
     'extract_flat': False,
+    # ✅ Cookies файл (создайте файл cookies.txt в этой же папке)
+    'cookiefile': 'cookies.txt',
+    # ✅ Правильные заголовки как у браузера
     'headers': {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         'Accept-Language': 'en-us,en;q=0.5',
         'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'same-origin',
     },
+    # ✅ Разные клиенты YouTube (mweb помогает обойти блокировку)
     'extractor_args': {
         'youtube': {
-            'player_client': ['web', 'android', 'mweb'],
+            'player_client': ['mweb', 'android', 'web'],
             'skip': ['hls', 'dash'],
             'player_skip': ['configs'],
         }
     },
     # ✅ Задержки для обхода блокировки YouTube
-    'sleep_interval': 5,
-    'max_sleep_interval': 10,
-    'sleep_interval_requests': 1,
+    'sleep_interval': 10,
+    'max_sleep_interval': 15,
+    'sleep_interval_requests': 2,
 }
 
 ffmpeg_options = {
@@ -163,8 +168,8 @@ async def extract_video_id(url):
     return None
 
 async def process_youtube(query):
-    """Обрабатывает URL с задержкой"""
-    await asyncio.sleep(2)  # ✅ Задержка перед запросом
+    """Обрабатывает URL с задержкой и cookies"""
+    await asyncio.sleep(3)  # ✅ Задержка перед запросом
     try:
         data = await asyncio.get_event_loop().run_in_executor(
             None, lambda: ytdl.extract_info(query, download=False)
@@ -206,7 +211,7 @@ async def process_youtube(query):
 
 async def search_youtube(query):
     """Поиск трека с задержкой"""
-    await asyncio.sleep(2)  # ✅ Задержка перед поиском
+    await asyncio.sleep(3)  # ✅ Задержка перед поиском
     try:
         search_query = f"ytsearch5:{query}"
         data = await asyncio.get_event_loop().run_in_executor(
@@ -534,7 +539,7 @@ async def play_next(guild):
     
     try:
         # ✅ Задержка перед получением аудио
-        await asyncio.sleep(2)
+        await asyncio.sleep(3)
         
         data = await asyncio.get_event_loop().run_in_executor(
             None, lambda: ytdl.extract_info(url, download=False)
