@@ -65,15 +65,11 @@ def upload_to_webdav(filename, data, retry=3):
             
             content = json.dumps(data, indent=4, ensure_ascii=False)
             
-            # Пытаемся загрузить
             try:
-                # Проверяем, существует ли файл
                 client.download(filename)
-                # Обновляем
                 client.upload(filename, content.encode('utf-8'))
                 print(f"✅ Обновлён на WebDAV: {filename}")
             except:
-                # Создаём новый
                 client.upload(filename, content.encode('utf-8'))
                 print(f"✅ Создан на WebDAV: {filename}")
             
@@ -82,7 +78,7 @@ def upload_to_webdav(filename, data, retry=3):
         except Exception as e:
             print(f"❌ Попытка {attempt+1}/{retry} загрузки {filename}: {e}")
             if attempt < retry - 1:
-                time.sleep(2 ** attempt)  # Экспоненциальная задержка
+                time.sleep(2 ** attempt)
     
     print(f"❌ Не удалось загрузить {filename} после {retry} попыток")
     return False
@@ -155,7 +151,7 @@ keep_alive()
 print("✅ Keep-Alive запущен!")
 
 # =====================================================
-#  📁  РАБОТА С ДАННЫМИ (С ПРИОРИТЕТОМ WEBDAV)
+#  📁  РАБОТА С ДАННЫМИ
 # =====================================================
 
 LEVEL_FILE = "level_data.json"
@@ -165,17 +161,14 @@ PROFILE_FILE = "user_profiles.json"
 
 def load_level_data():
     """Загружает данные - сначала с WebDAV, потом локально"""
-    # Сначала пробуем загрузить с WebDAV
     data = download_from_webdav("level_data.json")
     if data is not None:
         return data
     
-    # Если нет - загружаем локально
     try:
         with open(LEVEL_FILE, 'r', encoding='utf-8') as f:
             data = json.load(f)
             print(f"📂 Загружено локально: {LEVEL_FILE}")
-            # Сразу сохраняем на WebDAV
             upload_to_webdav("level_data.json", data)
             return data
     except FileNotFoundError:
@@ -187,7 +180,6 @@ def load_level_data():
 
 def save_level_data(data):
     """Сохраняет данные на WebDAV и локально"""
-    # Всегда сохраняем локально
     try:
         with open(LEVEL_FILE, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=4, ensure_ascii=False)
@@ -195,7 +187,6 @@ def save_level_data(data):
     except Exception as e:
         print(f"❌ Ошибка локального сохранения: {e}")
     
-    # И на WebDAV
     upload_to_webdav("level_data.json", data)
 
 def load_voice_time():
@@ -290,19 +281,15 @@ async def auto_save():
     try:
         print(f"💾 Автосохранение начато: {datetime.now().strftime('%H:%M:%S')}")
         
-        # Сохраняем конфиг
         config = load_config()
         save_config(config)
         
-        # Сохраняем данные пользователей
         data = load_level_data()
         save_level_data(data)
         
-        # Сохраняем голосовое время
         voice_data = load_voice_time()
         save_voice_time(voice_data)
         
-        # Сохраняем профили
         profiles = load_profiles()
         save_profiles(profiles)
         
@@ -317,7 +304,6 @@ async def auto_save_webdav():
         if WEBDAV_LOGIN and WEBDAV_PASSWORD:
             print(f"☁️ WebDAV автосохранение: {datetime.now().strftime('%H:%M:%S')}")
             
-            # Сохраняем на WebDAV
             data = load_level_data()
             upload_to_webdav("level_data.json", data)
             
@@ -428,12 +414,10 @@ async def on_ready():
     print(f'✅ Бот {bot.user} запущен!')
     print(f'📡 Серверов: {len(bot.guilds)}')
     
-    # Проверяем WebDAV
     print('☁️ Проверка WebDAV...')
     success, message = test_webdav_connection()
     if success:
         print(f'☁️ WebDAV: ✅ {message}')
-        # Проверяем наличие файлов
         try:
             client = get_webdav_client()
             if client:
@@ -462,7 +446,6 @@ async def on_ready():
     except Exception as e:
         print(f"❌ Ошибка синхронизации: {e}")
     
-    # Запускаем автосохранение
     auto_save.start()
     auto_save_webdav.start()
     print("💾 Автосохранение запущено (каждую минуту)")
@@ -558,7 +541,7 @@ class ProfileView(ui.View):
         await interaction.response.send_modal(modal)
 
 # =====================================================
-#  🎯  КРАСИВЫЙ ПРОФИЛЬ
+#  🎯  ОСНОВНЫЕ КОМАНДЫ
 # =====================================================
 
 @bot.tree.command(name="profile", description="📊 Показать красивый профиль")
@@ -568,7 +551,6 @@ async def slash_profile(interaction: discord.Interaction, member: discord.Member
         member = interaction.user
     
     data = load_level_data()
-    voice_data = load_voice_time()
     user_id = str(member.id)
     guild_id = str(interaction.guild.id)
     
@@ -603,8 +585,8 @@ async def slash_profile(interaction: discord.Interaction, member: discord.Member
     embed.add_field(name="📇 Имя", value=f"**{name}**", inline=True)
     embed.add_field(name="🎂 Возраст", value=f"**{age}**", inline=True)
     embed.add_field(name="⚧ Пол", value=f"**{gender}**", inline=True)
-    embed.add_field(name="💬 Активность", value=f"за всё время было отправлено **{messages_count}** сообщений", inline=False)
-    embed.add_field(name="🎤 Голосовая активность", value=f"**{format_time(voice_time)}**", inline=False)
+    embed.add_field(name="💬 Сообщений", value=f"**{messages_count}**", inline=True)
+    embed.add_field(name="🎤 Голосовое время", value=f"**{format_time(voice_time)}**", inline=True)
     embed.add_field(name="📝 Биография", value=bio if bio and bio != "Не указана" else "Не указана", inline=False)
     
     bar = create_progress_bar(progress)
@@ -626,10 +608,6 @@ async def slash_profile(interaction: discord.Interaction, member: discord.Member
     view = ProfileView(member.id, interaction.guild.id)
     await interaction.response.send_message(embed=embed, view=view)
 
-# =====================================================
-#  🏆  ТОП И РЕЙТИНГ
-# =====================================================
-
 @bot.tree.command(name="level", description="🎯 Открыть меню")
 async def slash_level(interaction: discord.Interaction):
     embed = discord.Embed(
@@ -643,10 +621,13 @@ async def slash_level(interaction: discord.Interaction):
               "`/top` - Топ пользователей\n"
               "`/rank` - Ваше место\n"
               "`/voice_stats` - Голосовая статистика\n"
+              "`/ping` - Проверить работу бота\n"
               "`/settings` - Настройки (админ)\n"
               "`/webdav` - Проверка WebDAV (админ)\n"
+              "`/webdav_test` - Тест WebDAV (админ)\n"
               "`/webdav_files` - Файлы на WebDAV (админ)\n"
               "`/webdav_sync` - Синхронизация с WebDAV (админ)\n"
+              "`/sync_commands` - Синхронизация команд (админ)\n"
               "`/autosave` - Управление автосохранением (админ)\n"
               "`/level_reload` - Перезагрузить данные (админ)\n"
               "`/level_save` - Сохранить данные (админ)",
@@ -720,10 +701,6 @@ async def slash_rank(interaction: discord.Interaction):
     
     await interaction.response.send_message(embed=embed)
 
-# =====================================================
-#  🎤  СТАТИСТИКА ГОЛОСОВЫХ КАНАЛОВ
-# =====================================================
-
 @bot.tree.command(name="voice_stats", description="🎤 Статистика голосовой активности")
 @app_commands.describe(member="Участник (опционально)")
 async def slash_voice_stats(interaction: discord.Interaction, member: discord.Member = None):
@@ -760,6 +737,11 @@ async def slash_voice_stats(interaction: discord.Interaction, member: discord.Me
     
     embed.set_footer(text=f"🆔 {member.id}")
     await interaction.response.send_message(embed=embed)
+
+@bot.tree.command(name="ping", description="🏓 Проверить работу бота")
+async def slash_ping(interaction: discord.Interaction):
+    """Простая команда для проверки"""
+    await interaction.response.send_message(f"🏓 Понг! Задержка: {round(bot.latency * 1000)}ms", ephemeral=True)
 
 # =====================================================
 #  ⚙️  НАСТРОЙКИ
@@ -1116,6 +1098,54 @@ async def slash_webdav(interaction: discord.Interaction):
     
     await interaction.followup.send(embed=embed, ephemeral=True)
 
+@bot.tree.command(name="webdav_test", description="🧪 Тест WebDAV (админ)")
+@app_commands.default_permissions(administrator=True)
+async def slash_webdav_test(interaction: discord.Interaction):
+    """Упрощённая проверка WebDAV"""
+    await interaction.response.defer(ephemeral=True)
+    
+    try:
+        if not WEBDAV_LOGIN or not WEBDAV_PASSWORD:
+            await interaction.followup.send(
+                "❌ WebDAV не настроен!\n"
+                "Установите переменные:\n"
+                "`WEBDAV_LOGIN` и `WEBDAV_PASSWORD`",
+                ephemeral=True
+            )
+            return
+        
+        client = get_webdav_client()
+        if not client:
+            await interaction.followup.send("❌ Не удалось создать клиент WebDAV", ephemeral=True)
+            return
+        
+        try:
+            files = client.list()
+            embed = discord.Embed(
+                title="✅ WebDAV работает!",
+                description=f"Найдено файлов: {len(files)}",
+                color=discord.Color.green()
+            )
+            if files:
+                embed.add_field(
+                    name="📁 Файлы",
+                    value="\n".join(files[:10]),
+                    inline=False
+                )
+            await interaction.followup.send(embed=embed, ephemeral=True)
+            
+        except Exception as e:
+            await interaction.followup.send(
+                f"❌ Ошибка при получении списка файлов:\n```\n{str(e)}\n```",
+                ephemeral=True
+            )
+            
+    except Exception as e:
+        await interaction.followup.send(
+            f"❌ Критическая ошибка:\n```\n{str(e)}\n```",
+            ephemeral=True
+        )
+
 @bot.tree.command(name="webdav_files", description="📁 Показать файлы на WebDAV (админ)")
 @app_commands.default_permissions(administrator=True)
 async def slash_webdav_files(interaction: discord.Interaction):
@@ -1185,7 +1215,6 @@ async def slash_webdav_sync(interaction: discord.Interaction):
     )
     
     try:
-        # Загружаем с WebDAV
         data = download_from_webdav("level_data.json")
         if data:
             save_level_data(data)
@@ -1281,6 +1310,43 @@ async def slash_autosave(interaction: discord.Interaction, action: str):
     
     else:
         await interaction.followup.send("❌ Доступные действия: `start`, `stop`, `status`", ephemeral=True)
+
+# =====================================================
+#  🔄  СИНХРОНИЗАЦИЯ КОМАНД
+# =====================================================
+
+@bot.tree.command(name="sync_commands", description="🔄 Синхронизировать команды (админ)")
+@app_commands.default_permissions(administrator=True)
+async def slash_sync_commands(interaction: discord.Interaction):
+    """Принудительная синхронизация команд"""
+    await interaction.response.defer(ephemeral=True)
+    
+    try:
+        await bot.tree.sync()
+        
+        guild = interaction.guild
+        await bot.tree.sync(guild=guild)
+        
+        embed = discord.Embed(
+            title="✅ Команды синхронизированы!",
+            description=f"Команды обновлены для сервера {guild.name}",
+            color=discord.Color.green()
+        )
+        
+        commands_list = [cmd.name for cmd in bot.tree.get_commands()]
+        embed.add_field(
+            name="📋 Доступные команды",
+            value="\n".join(commands_list[:15]),
+            inline=False
+        )
+        
+        await interaction.followup.send(embed=embed, ephemeral=True)
+        
+    except Exception as e:
+        await interaction.followup.send(
+            f"❌ Ошибка синхронизации:\n```\n{str(e)}\n```",
+            ephemeral=True
+        )
 
 # =====================================================
 #  📝  КОМАНДЫ ДЛЯ УПРАВЛЕНИЯ ДАННЫМИ
