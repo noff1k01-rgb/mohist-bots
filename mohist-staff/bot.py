@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-async def main():
-    async with bot:
-        print("🔄 Запуск Mohist_Staff...")
-        # ✅ Комментируем или удаляем строку с несуществующей функцией
-        await bot.start(TOKEN)
+import os
+TOKEN = os.getenv("TOKEN")
+if not TOKEN:
+    raise ValueError("❌ Токен не найден! Установите переменную окружения TOKEN")
 
 import discord
 from discord.ext import commands
+# ... остальные импорты
 from discord import ui, ButtonStyle, SelectOption, app_commands
 import json
 import asyncio
