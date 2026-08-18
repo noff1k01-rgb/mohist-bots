@@ -460,7 +460,7 @@ async def slash_level(interaction: discord.Interaction):
     )
     embed.add_field(
         name="📋 Команды",
-        value="`/profile` - Красивый профиль\n`/top` - Топ\n`/rank` - Рейтинг\n`/settings` - Настройки (админ)",
+        value="`/profile` - Красивый профиль\n`/top` - Топ\n`/rank` - Рейтинг\n`/settings` - Настройки (админ)\n`/webdav` - Проверка WebDAV (админ)",
         inline=False
     )
     embed.set_footer(text="💡 Будьте активны!")
@@ -1101,7 +1101,12 @@ async def slash_webdav(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
     
     if not WEBDAV_LOGIN or not WEBDAV_PASSWORD:
-        await interaction.followup.send("❌ WebDAV не настроен! Установите переменные WEBDAV_LOGIN и WEBDAV_PASSWORD", ephemeral=True)
+        embed = discord.Embed(
+            title="❌ WebDAV не настроен!",
+            description="Установите переменные окружения:\n`WEBDAV_LOGIN` и `WEBDAV_PASSWORD`",
+            color=discord.Color.red()
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
         return
     
     try:
@@ -1129,7 +1134,64 @@ async def slash_webdav(interaction: discord.Interaction):
         
         await interaction.followup.send(embed=embed, ephemeral=True)
     except Exception as e:
-        await interaction.followup.send(f"❌ Ошибка подключения к WebDAV: {e}", ephemeral=True)
+        embed = discord.Embed(
+            title="❌ Ошибка подключения к WebDAV",
+            description=f"```\n{str(e)}\n```",
+            color=discord.Color.red()
+        )
+        embed.add_field(
+            name="💡 Решение",
+            value="Проверьте:\n1. Логин и пароль\n2. URL сервера\n3. Доступность сервера",
+            inline=False
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+# =====================================================
+#  📝  КОМАНДЫ ДЛЯ УПРАВЛЕНИЯ ДАННЫМИ
+# =====================================================
+
+@bot.tree.command(name="level_reload", description="🔄 Перезагрузить данные (админ)")
+@app_commands.default_permissions(administrator=True)
+async def slash_level_reload(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+    
+    try:
+        config = load_config()
+        data = load_level_data()
+        
+        embed = discord.Embed(
+            title="🔄 Данные перезагружены!",
+            description="✅ Конфиг и данные успешно перезагружены",
+            color=discord.Color.green()
+        )
+        embed.add_field(
+            name="📊 Конфиг",
+            value=f"XP за сообщ: {config.get('message_xp', 1)}\nXP за голос: {config.get('voice_xp', 2)}\nИнтервал: {config.get('voice_interval', 60)} сек",
+            inline=False
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
+    except Exception as e:
+        await interaction.followup.send(f"❌ Ошибка: {e}", ephemeral=True)
+
+@bot.tree.command(name="level_save", description="💾 Сохранить данные (админ)")
+@app_commands.default_permissions(administrator=True)
+async def slash_level_save(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+    
+    try:
+        config = load_config()
+        save_config(config)
+        data = load_level_data()
+        save_level_data(data)
+        
+        embed = discord.Embed(
+            title="💾 Данные сохранены!",
+            description="✅ Все данные сохранены",
+            color=discord.Color.green()
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
+    except Exception as e:
+        await interaction.followup.send(f"❌ Ошибка: {e}", ephemeral=True)
 
 # =====================================================
 #  🚀  ЗАПУСК
