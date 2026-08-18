@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-import os
-TOKEN = os.getenv("TOKEN")
-if not TOKEN:
-    raise ValueError("❌ Токен не найден! Установите переменную окружения TOKEN")
+async def main():
+    async with bot:
+        print("🔄 Запуск Mohist_Staff...")
+        # ✅ Комментируем или удаляем строку с несуществующей функцией
+        await bot.start(TOKEN)
 
 import discord
 from discord.ext import commands
@@ -771,9 +772,7 @@ print("✅ Keep-Alive запущен!")
 
 async def main():
     async with bot:
-        print("🔄 Запуск Mohist_Level...")
-        # Запускаем фоновую задачу
-        bot.loop.create_task(give_xp())
+        print("🔄 Запуск Mohist_Staff...")
         await bot.start(TOKEN)
 
 if __name__ == "__main__":
@@ -781,5 +780,8 @@ if __name__ == "__main__":
         asyncio.run(main())
     except discord.LoginFailure:
         print("❌ Неверный токен!")
+    except KeyboardInterrupt:
+        print("\n🛑 Бот остановлен")
     except Exception as e:
+        print(f"❌ Ошибка: {e}")
         print(f"❌ Ошибка: {e}")
