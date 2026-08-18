@@ -15,6 +15,75 @@ import math
 from datetime import datetime, timedelta
 
 # =====================================================
+#  ☁️  НАСТРОЙКИ WEBDAV (ЛИЧНОЕ ХРАНИЛИЩЕ)
+# =====================================================
+
+WEBDAV_URL = os.getenv("WEBDAV_URL", "https://tentacis.netcraze.pro:8083/webdav/%D0%BB%D0%B8%D1%86%D0%BD%D0%BE%D0%B5/Divace/server/")
+WEBDAV_LOGIN = os.getenv("WEBDAV_LOGIN")
+WEBDAV_PASSWORD = os.getenv("WEBDAV_PASSWORD")
+
+if not WEBDAV_LOGIN or not WEBDAV_PASSWORD:
+    print("⚠️ WebDAV не настроен! Данные будут сохраняться локально.")
+
+try:
+    from webdav3.client import Client
+    WEBDAV_AVAILABLE = True
+except ImportError:
+    WEBDAV_AVAILABLE = False
+    print("⚠️ webdavclient3 не установлен! Установите: pip install webdavclient3")
+
+# =====================================================
+#  📁  РАБОТА С WEBDAV
+# =====================================================
+
+def get_webdav_client():
+    """Создаёт клиент для WebDAV"""
+    if not WEBDAV_AVAILABLE:
+        return None
+    
+    options = {
+        'webdav_hostname': WEBDAV_URL,
+        'webdav_login': WEBDAV_LOGIN,
+        'webdav_password': WEBDAV_PASSWORD,
+        'disable_ssl_certificate_validation': True,
+    }
+    return Client(options)
+
+def upload_to_webdav(filename, data):
+    """Загружает данные на WebDAV сервер"""
+    if not WEBDAV_AVAILABLE or not WEBDAV_LOGIN:
+        return False
+    
+    try:
+        client = get_webdav_client()
+        content = json.dumps(data, indent=4, ensure_ascii=False)
+        
+        try:
+            client.download(filename)
+            client.upload(filename, content.encode('utf-8'))
+            print(f"✅ Обновлён на WebDAV: {filename}")
+        except:
+            client.upload(filename, content.encode('utf-8'))
+            print(f"✅ Загружен на WebDAV: {filename}")
+        return True
+    except Exception as e:
+        print(f"❌ Ошибка загрузки {filename}: {e}")
+        return False
+
+def download_from_webdav(filename):
+    """Скачивает данные с WebDAV сервера"""
+    if not WEBDAV_AVAILABLE or not WEBDAV_LOGIN:
+        return None
+    
+    try:
+        client = get_webdav_client()
+        content = client.download(filename)
+        return json.loads(content.decode('utf-8'))
+    except Exception as e:
+        print(f"⚠️ Файл {filename} не найден на WebDAV: {e}")
+        return None
+
+# =====================================================
 #  🔄  KEEP-ALIVE ДЛЯ RENDER
 # =====================================================
 
@@ -38,7 +107,7 @@ keep_alive()
 print("✅ Keep-Alive запущен!")
 
 # =====================================================
-#  📁  РАБОТА С ДАННЫМИ
+#  📁  РАБОТА С ДАННЫМИ (С ПОДДЕРЖКОЙ WEBDAV)
 # =====================================================
 
 LEVEL_FILE = "level_data.json"
@@ -47,6 +116,10 @@ VOICE_TIME_FILE = "voice_time.json"
 PROFILE_FILE = "user_profiles.json"
 
 def load_level_data():
+    """Загружает данные с WebDAV или локально"""
+    data = download_from_webdav("level_data.json")
+    if data is not None:
+        return data
     try:
         with open(LEVEL_FILE, 'r') as f:
             return json.load(f)
@@ -54,10 +127,15 @@ def load_level_data():
         return {}
 
 def save_level_data(data):
+    """Сохраняет данные на WebDAV и локально"""
     with open(LEVEL_FILE, 'w') as f:
         json.dump(data, f, indent=4)
+    upload_to_webdav("level_data.json", data)
 
 def load_voice_time():
+    data = download_from_webdav("voice_time.json")
+    if data is not None:
+        return data
     try:
         with open(VOICE_TIME_FILE, 'r') as f:
             return json.load(f)
@@ -67,8 +145,12 @@ def load_voice_time():
 def save_voice_time(data):
     with open(VOICE_TIME_FILE, 'w') as f:
         json.dump(data, f, indent=4)
+    upload_to_webdav("voice_time.json", data)
 
 def load_profiles():
+    data = download_from_webdav("user_profiles.json")
+    if data is not None:
+        return data
     try:
         with open(PROFILE_FILE, 'r') as f:
             return json.load(f)
@@ -78,20 +160,12 @@ def load_profiles():
 def save_profiles(data):
     with open(PROFILE_FILE, 'w') as f:
         json.dump(data, f, indent=4)
-
-def get_user_profile(user_id, guild_id):
-    profiles = load_profiles()
-    guild_profiles = profiles.get(str(guild_id), {})
-    return guild_profiles.get(str(user_id), {})
-
-def update_user_profile(user_id, guild_id, data):
-    profiles = load_profiles()
-    if str(guild_id) not in profiles:
-        profiles[str(guild_id)] = {}
-    profiles[str(guild_id)][str(user_id)] = data
-    save_profiles(profiles)
+    upload_to_webdav("user_profiles.json", data)
 
 def load_config():
+    data = download_from_webdav("level_config.json")
+    if data is not None:
+        return data
     try:
         with open(CONFIG_FILE, 'r') as f:
             return json.load(f)
@@ -102,29 +176,14 @@ def load_config():
             "voice_interval": 60,
             "level_up_message": True,
             "level_up_channel": None,
-            "roles": {}
+            "roles": {},
+            "message_cooldown": 60
         }
 
 def save_config(data):
     with open(CONFIG_FILE, 'w') as f:
         json.dump(data, f, indent=4)
-
-def format_time(seconds):
-    hours = int(seconds // 3600)
-    minutes = int((seconds % 3600) // 60)
-    secs = int(seconds % 60)
-    
-    if hours > 0:
-        return f"{hours}ч {minutes}м {secs}с"
-    elif minutes > 0:
-        return f"{minutes}м {secs}с"
-    else:
-        return f"{secs}с"
-
-def create_progress_bar(progress, length=15):
-    filled = int(progress / 100 * length)
-    empty = length - filled
-    return f"`{'█' * filled}{'░' * empty}`"
+    upload_to_webdav("level_config.json", data)
 
 # =====================================================
 #  📊  ФУНКЦИИ ДЛЯ XP И УРОВНЕЙ
@@ -171,6 +230,35 @@ def get_voice_time(user_id, guild_id):
     guild_data = data.get(str(guild_id), {})
     return guild_data.get(str(user_id), 0)
 
+def format_time(seconds):
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    secs = int(seconds % 60)
+    
+    if hours > 0:
+        return f"{hours}ч {minutes}м {secs}с"
+    elif minutes > 0:
+        return f"{minutes}м {secs}с"
+    else:
+        return f"{secs}с"
+
+def create_progress_bar(progress, length=15):
+    filled = int(progress / 100 * length)
+    empty = length - filled
+    return f"`{'█' * filled}{'░' * empty}`"
+
+def get_user_profile(user_id, guild_id):
+    profiles = load_profiles()
+    guild_profiles = profiles.get(str(guild_id), {})
+    return guild_profiles.get(str(user_id), {})
+
+def update_user_profile(user_id, guild_id, data):
+    profiles = load_profiles()
+    if str(guild_id) not in profiles:
+        profiles[str(guild_id)] = {}
+    profiles[str(guild_id)][str(user_id)] = data
+    save_profiles(profiles)
+
 # =====================================================
 #  🎮  БОТ
 # =====================================================
@@ -190,6 +278,7 @@ message_tracker = {}
 async def on_ready():
     print(f'✅ Бот {bot.user} запущен!')
     print(f'📡 Серверов: {len(bot.guilds)}')
+    print(f'☁️ WebDAV: {"✅" if WEBDAV_LOGIN else "❌"}')
     print('=' * 50)
     await bot.change_presence(activity=discord.Activity(
         type=discord.ActivityType.watching,
@@ -1001,6 +1090,46 @@ async def on_voice_state_update(member, before, after):
             del voice_tracker[user_id][guild_id]
             if not voice_tracker[user_id]:
                 del voice_tracker[user_id]
+
+# =====================================================
+#  ☁️  КОМАНДА ДЛЯ ПРОВЕРКИ WEBDAV
+# =====================================================
+
+@bot.tree.command(name="webdav", description="☁️ Проверить подключение к WebDAV (админ)")
+@app_commands.default_permissions(administrator=True)
+async def slash_webdav(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+    
+    if not WEBDAV_LOGIN or not WEBDAV_PASSWORD:
+        await interaction.followup.send("❌ WebDAV не настроен! Установите переменные WEBDAV_LOGIN и WEBDAV_PASSWORD", ephemeral=True)
+        return
+    
+    try:
+        client = get_webdav_client()
+        files = client.list()
+        
+        embed = discord.Embed(
+            title="☁️ WebDAV подключён!",
+            description=f"Сервер: {WEBDAV_URL}",
+            color=discord.Color.green()
+        )
+        
+        if files:
+            embed.add_field(
+                name="📁 Файлы на сервере",
+                value="\n".join(files[:10]) if files else "Папка пуста",
+                inline=False
+            )
+        else:
+            embed.add_field(
+                name="📁 Файлы на сервере",
+                value="Папка пуста",
+                inline=False
+            )
+        
+        await interaction.followup.send(embed=embed, ephemeral=True)
+    except Exception as e:
+        await interaction.followup.send(f"❌ Ошибка подключения к WebDAV: {e}", ephemeral=True)
 
 # =====================================================
 #  🚀  ЗАПУСК
