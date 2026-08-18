@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-TOKEN = "ваш тикет бота в дискорд понели"
+import os
+TOKEN = os.getenv("TOKEN")
+if not TOKEN:
+    raise ValueError("❌ Токен не найден! Установите переменную окружения TOKEN")
 
 import discord
 from discord.ext import commands
