@@ -7,7 +7,7 @@ if not TOKEN:
     raise ValueError("❌ Токен не найден! Установите переменную окружения TOKEN")
 
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 from discord import ui, ButtonStyle, SelectOption, app_commands
 import json
 import asyncio
@@ -186,6 +186,56 @@ def save_config(data):
     upload_to_webdav("level_config.json", data)
 
 # =====================================================
+#  💾  АВТОМАТИЧЕСКОЕ СОХРАНЕНИЕ
+# =====================================================
+
+@tasks.loop(minutes=1.0)
+async def auto_save():
+    """Автоматически сохраняет данные каждую минуту"""
+    try:
+        # Сохраняем конфиг
+        config = load_config()
+        save_config(config)
+        
+        # Сохраняем данные пользователей
+        data = load_level_data()
+        save_level_data(data)
+        
+        # Сохраняем голосовое время
+        voice_data = load_voice_time()
+        save_voice_time(voice_data)
+        
+        # Сохраняем профили
+        profiles = load_profiles()
+        save_profiles(profiles)
+        
+        print(f"💾 Автосохранение: {datetime.now().strftime('%H:%M:%S')}")
+    except Exception as e:
+        print(f"❌ Ошибка автосохранения: {e}")
+
+@tasks.loop(minutes=5.0)
+async def auto_save_webdav():
+    """Автоматически сохраняет данные на WebDAV каждые 5 минут"""
+    try:
+        if WEBDAV_LOGIN:
+            # Сохраняем на WebDAV
+            data = load_level_data()
+            upload_to_webdav("level_data.json", data)
+            
+            voice_data = load_voice_time()
+            upload_to_webdav("voice_time.json", voice_data)
+            
+            profiles = load_profiles()
+            upload_to_webdav("user_profiles.json", profiles)
+            
+            config = load_config()
+            upload_to_webdav("level_config.json", config)
+            
+            print(f"☁️ WebDAV автосохранение: {datetime.now().strftime('%H:%M:%S')}")
+    except Exception as e:
+        print(f"❌ Ошибка WebDAV автосохранения: {e}")
+
+# =====================================================
 #  📊  ФУНКЦИИ ДЛЯ XP И УРОВНЕЙ
 # =====================================================
 
@@ -289,6 +339,12 @@ async def on_ready():
         print("✅ Слеш-команды синхронизированы!")
     except Exception as e:
         print(f"❌ Ошибка синхронизации: {e}")
+    
+    # ✅ Запускаем автосохранение
+    auto_save.start()
+    auto_save_webdav.start()
+    print("💾 Автосохранение запущено (каждую минуту)")
+    print("☁️ WebDAV автосохранение запущено (каждые 5 минут)")
 
 # =====================================================
 #  ✏️  РЕДАКТИРОВАНИЕ ПРОФИЛЯ
@@ -460,7 +516,7 @@ async def slash_level(interaction: discord.Interaction):
     )
     embed.add_field(
         name="📋 Команды",
-        value="`/profile` - Красивый профиль\n`/top` - Топ\n`/rank` - Рейтинг\n`/settings` - Настройки (админ)\n`/webdav` - Проверка WebDAV (админ)",
+        value="`/profile` - Красивый профиль\n`/top` - Топ\n`/rank` - Рейтинг\n`/settings` - Настройки (админ)\n`/webdav` - Проверка WebDAV (админ)\n`/autosave` - Управление автосохранением (админ)",
         inline=False
     )
     embed.set_footer(text="💡 Будьте активны!")
@@ -1145,6 +1201,57 @@ async def slash_webdav(interaction: discord.Interaction):
             inline=False
         )
         await interaction.followup.send(embed=embed, ephemeral=True)
+
+# =====================================================
+#  💾  УПРАВЛЕНИЕ АВТОСОХРАНЕНИЕМ
+# =====================================================
+
+@bot.tree.command(name="autosave", description="💾 Управление автосохранением (админ)")
+@app_commands.default_permissions(administrator=True)
+@app_commands.describe(action="start, stop, status")
+async def slash_autosave(interaction: discord.Interaction, action: str):
+    await interaction.response.defer(ephemeral=True)
+    
+    if action == "start":
+        if auto_save.is_running():
+            await interaction.followup.send("ℹ️ Автосохранение уже запущено!", ephemeral=True)
+            return
+        auto_save.start()
+        auto_save_webdav.start()
+        await interaction.followup.send("✅ Автосохранение запущено!", ephemeral=True)
+    
+    elif action == "stop":
+        if not auto_save.is_running():
+            await interaction.followup.send("ℹ️ Автосохранение уже остановлено!", ephemeral=True)
+            return
+        auto_save.cancel()
+        auto_save_webdav.cancel()
+        await interaction.followup.send("⏹️ Автосохранение остановлено!", ephemeral=True)
+    
+    elif action == "status":
+        embed = discord.Embed(
+            title="💾 Статус автосохранения",
+            color=discord.Color.blue()
+        )
+        embed.add_field(
+            name="📁 Локальное сохранение",
+            value="✅ Запущено (каждую минуту)" if auto_save.is_running() else "❌ Остановлено",
+            inline=True
+        )
+        embed.add_field(
+            name="☁️ WebDAV сохранение",
+            value="✅ Запущено (каждые 5 минут)" if auto_save_webdav.is_running() else "❌ Остановлено",
+            inline=True
+        )
+        embed.add_field(
+            name="💾 Последнее сохранение",
+            value=datetime.now().strftime("%H:%M:%S"),
+            inline=True
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
+    
+    else:
+        await interaction.followup.send("❌ Доступные действия: `start`, `stop`, `status`", ephemeral=True)
 
 # =====================================================
 #  📝  КОМАНДЫ ДЛЯ УПРАВЛЕНИЯ ДАННЫМИ
