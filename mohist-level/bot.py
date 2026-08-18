@@ -18,9 +18,10 @@ TOKEN = os.getenv("TOKEN")
 if not TOKEN:
     raise ValueError("❌ Токен не найден!")
 
-WEBDAV_URL = os.getenv("WEBDAV_URL", "https://tentacis.netcraze.pro:8083/webdav/%D0%BB%D0%B8%D1%86%D0%BD%D0%BE%D0%B5/Divace/server/")
+WEBDAV_URL = os.getenv("WEBDAV_URL", "https://tentacis.netcraze.pro:8083/webdav/")
 WEBDAV_LOGIN = os.getenv("WEBDAV_LOGIN")
 WEBDAV_PASSWORD = os.getenv("WEBDAV_PASSWORD")
+WEBDAV_BASE = "/licnoe/Divace/server/"
 
 # =====================================================
 #  📦  ИМПОРТ WEBDAV
@@ -38,6 +39,7 @@ except ImportError:
 # =====================================================
 
 def get_webdav_client():
+    """Создаёт клиент для WebDAV"""
     if not WEBDAV_AVAILABLE or not WEBDAV_LOGIN or not WEBDAV_PASSWORD:
         return None
     
@@ -50,7 +52,12 @@ def get_webdav_client():
     }
     return Client(options)
 
+def get_full_path(filename):
+    """Возвращает полный путь к файлу"""
+    return f"{WEBDAV_BASE}{filename}"
+
 def upload_to_webdav(filename, data):
+    """Загружает данные на WebDAV"""
     if not WEBDAV_AVAILABLE or not WEBDAV_LOGIN or not WEBDAV_PASSWORD:
         return False
     
@@ -59,18 +66,27 @@ def upload_to_webdav(filename, data):
         if not client:
             return False
         
+        full_path = get_full_path(filename)
         content = json.dumps(data, indent=4, ensure_ascii=False)
+        
         try:
-            client.download(filename)
-            client.upload(filename, content.encode('utf-8'))
+            client.mkdir(WEBDAV_BASE)
         except:
-            client.upload(filename, content.encode('utf-8'))
+            pass
+        
+        try:
+            client.download(full_path)
+            client.upload(full_path, content.encode('utf-8'))
+        except:
+            client.upload(full_path, content.encode('utf-8'))
+        
         return True
     except Exception as e:
-        print(f"❌ WebDAV ошибка {filename}: {e}")
+        print(f"❌ Ошибка загрузки {filename}: {e}")
         return False
 
 def download_from_webdav(filename):
+    """Скачивает данные с WebDAV"""
     if not WEBDAV_AVAILABLE or not WEBDAV_LOGIN or not WEBDAV_PASSWORD:
         return None
     
@@ -78,10 +94,46 @@ def download_from_webdav(filename):
         client = get_webdav_client()
         if not client:
             return None
-        content = client.download(filename)
+        
+        full_path = get_full_path(filename)
+        content = client.download(full_path)
         return json.loads(content.decode('utf-8'))
     except:
         return None
+
+def list_webdav_files():
+    """Получает список файлов на WebDAV"""
+    try:
+        client = get_webdav_client()
+        if not client:
+            return []
+        try:
+            files = client.list(WEBDAV_BASE)
+            return [f for f in files if not f.endswith('/')]
+        except:
+            return []
+    except:
+        return []
+
+def test_webdav_write():
+    """Тестовая запись на WebDAV"""
+    try:
+        test_data = {
+            "test": True,
+            "timestamp": datetime.now().isoformat(),
+            "message": "Тестовая запись от бота Mohist_Level"
+        }
+        result = upload_to_webdav("test_write.json", test_data)
+        if result:
+            files = list_webdav_files()
+            if "test_write.json" in files:
+                return True, "✅ Тестовая запись успешна!"
+            else:
+                return False, "⚠️ Файл не появился в списке"
+        else:
+            return False, "❌ Не удалось записать файл"
+    except Exception as e:
+        return False, f"❌ Ошибка: {e}"
 
 # =====================================================
 #  🔄  KEEP-ALIVE
@@ -95,6 +147,10 @@ app = Flask('')
 @app.route('/')
 def home():
     return "✅ Mohist_Level работает!"
+
+@app.route('/health')
+def health():
+    return "OK", 200
 
 def run():
     app.run(host='0.0.0.0', port=10000, debug=False)
@@ -111,67 +167,103 @@ CONFIG_FILE = "level_config.json"
 VOICE_TIME_FILE = "voice_time.json"
 PROFILE_FILE = "user_profiles.json"
 
-def load_level_data():
+_data_cache = {
+    "level": None,
+    "voice": None,
+    "profiles": None,
+    "config": None
+}
+
+def load_level_data(force_reload=False):
+    if not force_reload and _data_cache["level"] is not None:
+        return _data_cache["level"]
     data = download_from_webdav("level_data.json")
     if data is not None:
+        _data_cache["level"] = data
         return data
     try:
         with open(LEVEL_FILE, 'r', encoding='utf-8') as f:
-            return json.load(f)
+            data = json.load(f)
+            _data_cache["level"] = data
+            return data
     except:
-        return {}
+        data = {}
+        _data_cache["level"] = data
+        return data
 
 def save_level_data(data):
+    _data_cache["level"] = data
     try:
         with open(LEVEL_FILE, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=4, ensure_ascii=False)
     except Exception as e:
-        print(f"❌ Ошибка сохранения: {e}")
+        print(f"❌ Ошибка локального сохранения: {e}")
     upload_to_webdav("level_data.json", data)
 
-def load_voice_time():
+def load_voice_time(force_reload=False):
+    if not force_reload and _data_cache["voice"] is not None:
+        return _data_cache["voice"]
     data = download_from_webdav("voice_time.json")
     if data is not None:
+        _data_cache["voice"] = data
         return data
     try:
         with open(VOICE_TIME_FILE, 'r', encoding='utf-8') as f:
-            return json.load(f)
+            data = json.load(f)
+            _data_cache["voice"] = data
+            return data
     except:
-        return {}
+        data = {}
+        _data_cache["voice"] = data
+        return data
 
 def save_voice_time(data):
+    _data_cache["voice"] = data
     try:
         with open(VOICE_TIME_FILE, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=4, ensure_ascii=False)
     except Exception as e:
-        print(f"❌ Ошибка сохранения: {e}")
+        print(f"❌ Ошибка локального сохранения: {e}")
     upload_to_webdav("voice_time.json", data)
 
-def load_profiles():
+def load_profiles(force_reload=False):
+    if not force_reload and _data_cache["profiles"] is not None:
+        return _data_cache["profiles"]
     data = download_from_webdav("user_profiles.json")
     if data is not None:
+        _data_cache["profiles"] = data
         return data
     try:
         with open(PROFILE_FILE, 'r', encoding='utf-8') as f:
-            return json.load(f)
+            data = json.load(f)
+            _data_cache["profiles"] = data
+            return data
     except:
-        return {}
+        data = {}
+        _data_cache["profiles"] = data
+        return data
 
 def save_profiles(data):
+    _data_cache["profiles"] = data
     try:
         with open(PROFILE_FILE, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=4, ensure_ascii=False)
     except Exception as e:
-        print(f"❌ Ошибка сохранения: {e}")
+        print(f"❌ Ошибка локального сохранения: {e}")
     upload_to_webdav("user_profiles.json", data)
 
-def load_config():
+def load_config(force_reload=False):
+    if not force_reload and _data_cache["config"] is not None:
+        return _data_cache["config"]
     data = download_from_webdav("level_config.json")
     if data is not None:
+        _data_cache["config"] = data
         return data
     try:
         with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
-            return json.load(f)
+            data = json.load(f)
+            _data_cache["config"] = data
+            return data
     except:
         default = {
             "message_xp": 1,
@@ -185,15 +277,42 @@ def load_config():
         return default
 
 def save_config(data):
+    _data_cache["config"] = data
     try:
         with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=4, ensure_ascii=False)
     except Exception as e:
-        print(f"❌ Ошибка сохранения: {e}")
+        print(f"❌ Ошибка локального сохранения: {e}")
     upload_to_webdav("level_config.json", data)
 
 # =====================================================
-#  📊  ФУНКЦИИ
+#  💾  АВТОСОХРАНЕНИЕ И АВТООБНОВЛЕНИЕ
+# =====================================================
+
+@tasks.loop(minutes=5.0)
+async def auto_reload_data():
+    """Автоматически перезагружает данные с WebDAV каждые 5 минут"""
+    try:
+        load_level_data(force_reload=True)
+        load_voice_time(force_reload=True)
+        load_profiles(force_reload=True)
+        load_config(force_reload=True)
+    except Exception as e:
+        print(f"❌ Ошибка автообновления: {e}")
+
+@tasks.loop(minutes=1.0)
+async def auto_save():
+    """Автоматически сохраняет данные каждую минуту"""
+    try:
+        save_config(load_config())
+        save_level_data(load_level_data())
+        save_voice_time(load_voice_time())
+        save_profiles(load_profiles())
+    except Exception as e:
+        print(f"❌ Автосохранение: {e}")
+
+# =====================================================
+#  📊  ФУНКЦИИ ДЛЯ XP
 # =====================================================
 
 def get_xp_for_level(level):
@@ -266,18 +385,66 @@ def update_user_profile(user_id, guild_id, data):
     save_profiles(profiles)
 
 # =====================================================
-#  💾  АВТОСОХРАНЕНИЕ
+#  🎨  ЦВЕТА И ЭМОДЗИ ДЛЯ ПРОФИЛЯ
 # =====================================================
 
-@tasks.loop(minutes=1.0)
-async def auto_save():
-    try:
-        save_config(load_config())
-        save_level_data(load_level_data())
-        save_voice_time(load_voice_time())
-        save_profiles(load_profiles())
-    except Exception as e:
-        print(f"❌ Автосохранение: {e}")
+def get_level_color(level):
+    """Цвет в зависимости от уровня"""
+    if level >= 100:
+        return discord.Color.gold()
+    elif level >= 75:
+        return discord.Color.purple()
+    elif level >= 50:
+        return discord.Color.blue()
+    elif level >= 25:
+        return discord.Color.green()
+    elif level >= 10:
+        return discord.Color.orange()
+    elif level >= 5:
+        return discord.Color.teal()
+    else:
+        return discord.Color.grey()
+
+def get_level_rank_emoji(level):
+    """Эмодзи для ранга"""
+    if level >= 100:
+        return "👑"
+    elif level >= 75:
+        return "💎"
+    elif level >= 50:
+        return "🌟"
+    elif level >= 30:
+        return "⭐"
+    elif level >= 20:
+        return "✨"
+    elif level >= 10:
+        return "💫"
+    else:
+        return "🌱"
+
+def get_xp_emoji(progress):
+    """Эмодзи для прогресса"""
+    if progress >= 90:
+        return "🔥"
+    elif progress >= 70:
+        return "⚡"
+    elif progress >= 50:
+        return "💪"
+    elif progress >= 30:
+        return "📈"
+    else:
+        return "🌱"
+
+def get_medal(rank):
+    """Медаль для места в топе"""
+    if rank == 1:
+        return "🥇"
+    elif rank == 2:
+        return "🥈"
+    elif rank == 3:
+        return "🥉"
+    else:
+        return f"#{rank}"
 
 # =====================================================
 #  🎮  БОТ
@@ -294,12 +461,104 @@ bot = commands.Bot(command_prefix='!', intents=intents)
 voice_tracker = {}
 message_tracker = {}
 
+# =====================================================
+#  ✏️  РЕДАКТИРОВАНИЕ ПРОФИЛЯ
+# =====================================================
+
+class ProfileEditModal(ui.Modal, title="✏️ Изменение профиля"):
+    def __init__(self, user_id, guild_id):
+        super().__init__()
+        self.user_id = user_id
+        self.guild_id = guild_id
+        
+        profile = get_user_profile(user_id, guild_id)
+        
+        self.name = ui.TextInput(
+            label="📇 Имя",
+            placeholder="Введите ваше имя...",
+            default=profile.get("name", ""),
+            required=False,
+            style=discord.TextStyle.short,
+            max_length=50
+        )
+        self.add_item(self.name)
+        
+        self.age = ui.TextInput(
+            label="🎂 Возраст",
+            placeholder="Введите ваш возраст...",
+            default=profile.get("age", ""),
+            required=False,
+            style=discord.TextStyle.short,
+            max_length=3
+        )
+        self.add_item(self.age)
+        
+        self.gender = ui.TextInput(
+            label="⚧ Пол",
+            placeholder="Муж / Жен / Другой...",
+            default=profile.get("gender", ""),
+            required=False,
+            style=discord.TextStyle.short,
+            max_length=20
+        )
+        self.add_item(self.gender)
+        
+        self.bio = ui.TextInput(
+            label="📝 Биография",
+            placeholder="Расскажите о себе...",
+            default=profile.get("bio", ""),
+            required=False,
+            style=discord.TextStyle.paragraph,
+            max_length=500
+        )
+        self.add_item(self.bio)
+    
+    async def on_submit(self, interaction: discord.Interaction):
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("❌ Это не ваш профиль!", ephemeral=True)
+            return
+        
+        data = {
+            "name": self.name.value,
+            "age": self.age.value,
+            "gender": self.gender.value,
+            "bio": self.bio.value,
+            "updated_at": datetime.now().isoformat()
+        }
+        
+        update_user_profile(self.user_id, self.guild_id, data)
+        
+        embed = discord.Embed(
+            title="✅ Профиль обновлён!",
+            description="Ваши данные успешно сохранены.",
+            color=discord.Color.green()
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+class ProfileView(ui.View):
+    def __init__(self, user_id, guild_id):
+        super().__init__(timeout=180)
+        self.user_id = user_id
+        self.guild_id = guild_id
+    
+    @ui.button(label="✏️ Редактировать профиль", style=ButtonStyle.primary, row=0)
+    async def edit_profile(self, interaction: discord.Interaction, button: ui.Button):
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("❌ Это не ваш профиль!", ephemeral=True)
+            return
+        
+        modal = ProfileEditModal(self.user_id, self.guild_id)
+        await interaction.response.send_modal(modal)
+
+# =====================================================
+#  🎯  ОСНОВНЫЕ КОМАНДЫ
+# =====================================================
+
 @bot.event
 async def on_ready():
     print(f'✅ Бот {bot.user} запущен!')
     print(f'📡 Серверов: {len(bot.guilds)}')
     
-    # Проверка WebDAV
     if WEBDAV_LOGIN and WEBDAV_PASSWORD:
         try:
             client = get_webdav_client()
@@ -318,33 +577,28 @@ async def on_ready():
         name="🎯 Уровни | /profile"
     ))
     
-    # СИНХРОНИЗАЦИЯ КОМАНД - ВАЖНО!
     try:
         await bot.tree.sync()
         print("✅ Слеш-команды синхронизированы глобально!")
-        
-        # Синхронизируем для каждого сервера
         for guild in bot.guilds:
             try:
                 await bot.tree.sync(guild=guild)
                 print(f"   ✅ Синхронизировано для {guild.name}")
             except Exception as e:
-                print(f"   ❌ Ошибка синхронизации для {guild.name}: {e}")
+                print(f"   ❌ Ошибка для {guild.name}: {e}")
     except Exception as e:
         print(f"❌ Ошибка синхронизации: {e}")
     
     auto_save.start()
-    print("💾 Автосохранение запущено!")
+    auto_reload_data.start()
+    print("💾 Автосохранение запущено (каждую минуту)")
+    print("🔄 Автообновление запущено (каждые 5 минут)")
 
 # =====================================================
-#  🎯  КОМАНДЫ
+#  🎨  КРАСИВЫЙ ПРОФИЛЬ
 # =====================================================
 
-@bot.tree.command(name="ping", description="🏓 Проверить работу бота")
-async def slash_ping(interaction: discord.Interaction):
-    await interaction.response.send_message(f"🏓 Понг! {round(bot.latency * 1000)}ms", ephemeral=True)
-
-@bot.tree.command(name="profile", description="📊 Показать профиль")
+@bot.tree.command(name="profile", description="📊 Показать красивый профиль")
 @app_commands.describe(member="Участник (опционально)")
 async def slash_profile(interaction: discord.Interaction, member: discord.Member = None):
     if not member:
@@ -356,6 +610,9 @@ async def slash_profile(interaction: discord.Interaction, member: discord.Member
     
     profile = get_user_profile(member.id, interaction.guild.id)
     name = profile.get("name", member.display_name)
+    age = profile.get("age", "Не указан")
+    gender = profile.get("gender", "Не указан")
+    bio = profile.get("bio", "Не указана")
     
     if guild_id not in data:
         data[guild_id] = {}
@@ -370,27 +627,89 @@ async def slash_profile(interaction: discord.Interaction, member: discord.Member
     progress = get_progress(user_data)
     rank = get_rank(member.id, interaction.guild.id)
     voice_time = get_voice_time(member.id, interaction.guild.id)
+    messages_count = user_data.get("messages", 0)
+    
+    color = get_level_color(level)
+    rank_emoji = get_level_rank_emoji(level)
+    xp_emoji = get_xp_emoji(progress)
     
     embed = discord.Embed(
-        title=f"📊 Профиль {member.display_name}",
-        color=discord.Color.blue()
+        title=f"{rank_emoji} Профиль {member.display_name}",
+        color=color,
+        timestamp=datetime.now()
     )
+    
     embed.set_thumbnail(url=member.avatar.url if member.avatar else member.default_avatar.url)
-    embed.add_field(name="📇 Имя", value=f"**{name}**", inline=True)
-    embed.add_field(name="🎯 Уровень", value=f"**{level}**", inline=True)
-    embed.add_field(name="⭐ XP", value=f"**{xp}** / {next_xp}", inline=True)
+    
+    embed.add_field(
+        name="📇 **Имя**",
+        value=f"**{name}**",
+        inline=True
+    )
+    embed.add_field(
+        name="🎂 **Возраст**",
+        value=f"**{age}**",
+        inline=True
+    )
+    embed.add_field(
+        name="⚧ **Пол**",
+        value=f"**{gender}**",
+        inline=True
+    )
+    
+    embed.add_field(
+        name="💬 **Сообщений**",
+        value=f"**{messages_count}** 💬",
+        inline=True
+    )
+    embed.add_field(
+        name="🎤 **Голосовое время**",
+        value=f"**{format_time(voice_time)}** 🎵",
+        inline=True
+    )
+    embed.add_field(
+        name="🏆 **Место**",
+        value=f"**#{rank if rank else '—'}** 🏅",
+        inline=True
+    )
+    
+    if bio and bio != "Не указана":
+        embed.add_field(
+            name="📝 **Биография**",
+            value=f"_{bio}_",
+            inline=False
+        )
     
     bar = create_progress_bar(progress)
     embed.add_field(
-        name="📊 Прогресс",
+        name=f"{xp_emoji} **Прогресс до следующего уровня**",
         value=f"{bar} **{progress:.1f}%**",
         inline=False
     )
-    embed.add_field(name="🏆 Место", value=f"**#{rank if rank else '—'}**", inline=True)
-    embed.add_field(name="🎤 Голосовое время", value=format_time(voice_time), inline=True)
-    embed.add_field(name="💬 Сообщений", value=f"**{user_data.get('messages', 0)}**", inline=True)
     
-    await interaction.response.send_message(embed=embed)
+    embed.add_field(
+        name="🎯 **Уровень**",
+        value=f"**{level}**",
+        inline=True
+    )
+    embed.add_field(
+        name="⭐ **XP**",
+        value=f"**{xp}** / {next_xp}",
+        inline=True
+    )
+    embed.add_field(
+        name="📊 **Прогресс**",
+        value=f"**{progress:.1f}%**",
+        inline=True
+    )
+    
+    embed.set_footer(
+        text=f"🆔 {member.id} • Запрошено: {interaction.user.display_name}",
+        icon_url=interaction.user.avatar.url if interaction.user.avatar else None
+    )
+    
+    view = ProfileView(member.id, interaction.guild.id)
+    await interaction.response.send_message(embed=embed, view=view)
 
 @bot.tree.command(name="top", description="🏆 Топ пользователей")
 async def slash_top(interaction: discord.Interaction):
@@ -409,54 +728,211 @@ async def slash_top(interaction: discord.Interaction):
     
     embed = discord.Embed(
         title="🏆 Топ пользователей",
-        color=discord.Color.gold()
+        color=discord.Color.gold(),
+        timestamp=datetime.now()
     )
+    
+    embed.set_thumbnail(url=interaction.guild.icon.url if interaction.guild.icon else None)
     
     for i, (uid, user_data) in enumerate(sorted_users[:10], 1):
         member = interaction.guild.get_member(int(uid))
         name = member.display_name if member else f"<@{uid}>"
         level = user_data.get("level", 0)
         xp = user_data.get("xp", 0)
+        voice_time = get_voice_time(int(uid), interaction.guild.id)
         
         medal = ["🥇", "🥈", "🥉"][i-1] if i <= 3 else f"{i}."
         embed.add_field(
             name=f"{medal} {name}",
-            value=f"🎯 Уровень {level} | ⭐ {xp} XP",
+            value=f"🎯 Уровень **{level}** | ⭐ {xp} XP\n🎤 {format_time(voice_time)}",
             inline=False
         )
     
+    if len(sorted_users) > 10:
+        embed.set_footer(text=f"И ещё {len(sorted_users)-10} участников...")
+    
     await interaction.response.send_message(embed=embed)
+
+@bot.tree.command(name="server_stats", description="📊 Статистика сервера")
+async def slash_server_stats(interaction: discord.Interaction):
+    await interaction.response.defer()
+    
+    data = load_level_data()
+    guild_id = str(interaction.guild.id)
+    
+    if guild_id not in data or not data[guild_id]:
+        await interaction.followup.send("📭 Нет данных о пользователях")
+        return
+    
+    users_data = data[guild_id]
+    total_users = len(users_data)
+    total_xp = sum(u.get("xp", 0) for u in users_data.values())
+    total_messages = sum(u.get("messages", 0) for u in users_data.values())
+    max_level = max((u.get("level", 0) for u in users_data.values()), default=0)
+    
+    sorted_users = sorted(
+        users_data.items(),
+        key=lambda x: (x[1].get("level", 0), x[1].get("xp", 0)),
+        reverse=True
+    )
+    
+    embed = discord.Embed(
+        title="📊 Статистика сервера",
+        color=discord.Color.blue(),
+        timestamp=datetime.now()
+    )
+    
+    if interaction.guild.icon:
+        embed.set_thumbnail(url=interaction.guild.icon.url)
+    
+    embed.add_field(
+        name="👥 **Всего участников**",
+        value=f"**{total_users}**",
+        inline=True
+    )
+    embed.add_field(
+        name="⭐ **Всего XP**",
+        value=f"**{total_xp}**",
+        inline=True
+    )
+    embed.add_field(
+        name="👑 **Макс. уровень**",
+        value=f"**{max_level}**",
+        inline=True
+    )
+    
+    embed.add_field(
+        name="💬 **Всего сообщений**",
+        value=f"**{total_messages}**",
+        inline=True
+    )
+    embed.add_field(
+        name="📊 **Средний уровень**",
+        value=f"**{total_xp // total_users if total_users > 0 else 0}**",
+        inline=True
+    )
+    embed.add_field(
+        name="🏅 **Активных участников**",
+        value=f"**{len([u for u in users_data.values() if u.get('messages', 0) > 0])}**",
+        inline=True
+    )
+    
+    top_text = ""
+    for i, (uid, user_data) in enumerate(sorted_users[:3], 1):
+        member = interaction.guild.get_member(int(uid))
+        name = member.display_name if member else f"<@{uid}>"
+        level = user_data.get("level", 0)
+        medals = ["🥇", "🥈", "🥉"]
+        top_text += f"{medals[i-1]} **{name}** - Уровень {level}\n"
+    
+    if top_text:
+        embed.add_field(
+            name="🏆 **Топ участников**",
+            value=top_text,
+            inline=False
+        )
+    
+    embed.set_footer(
+        text=f"🆔 {interaction.guild.id}",
+        icon_url=interaction.guild.icon.url if interaction.guild.icon else None
+    )
+    
+    await interaction.followup.send(embed=embed)
+
+@bot.tree.command(name="ping", description="🏓 Проверить работу бота")
+async def slash_ping(interaction: discord.Interaction):
+    await interaction.response.send_message(f"🏓 Понг! {round(bot.latency * 1000)}ms", ephemeral=True)
+
+@bot.tree.command(name="level", description="🎯 Открыть меню")
+async def slash_level(interaction: discord.Interaction):
+    embed = discord.Embed(
+        title="🎯 Система уровней",
+        description="💬 За сообщения + 🎤 За голосовой канал",
+        color=discord.Color.blue()
+    )
+    embed.add_field(
+        name="📋 **Доступные команды**",
+        value="`/profile` - 📊 Красивый профиль\n"
+              "`/top` - 🏆 Топ пользователей\n"
+              "`/server_stats` - 📊 Статистика сервера\n"
+              "`/ping` - 🏓 Проверить работу бота",
+        inline=False
+    )
+    embed.add_field(
+        name="🔧 **Администраторские**",
+        value="`/webdav` - ☁️ Проверка WebDAV\n"
+              "`/sync` - 🔄 Синхронизация команд",
+        inline=False
+    )
+    embed.set_footer(text="💡 Будьте активны и повышайте свой уровень!")
+    await interaction.response.send_message(embed=embed)
+
+# =====================================================
+#  ☁️  WEBDAV КОМАНДА
+# =====================================================
 
 @bot.tree.command(name="webdav", description="☁️ Проверить WebDAV (админ)")
 @app_commands.default_permissions(administrator=True)
 async def slash_webdav(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
     
+    embed = discord.Embed(
+        title="☁️ Диагностика WebDAV",
+        color=discord.Color.blue()
+    )
+    
     if not WEBDAV_LOGIN or not WEBDAV_PASSWORD:
-        await interaction.followup.send("❌ WebDAV не настроен!", ephemeral=True)
+        embed.add_field(
+            name="❌ WebDAV не настроен",
+            value="Установите переменные:\n`WEBDAV_LOGIN` и `WEBDAV_PASSWORD`",
+            inline=False
+        )
+        embed.color = discord.Color.red()
+        await interaction.followup.send(embed=embed, ephemeral=True)
         return
+    
+    embed.add_field(
+        name="🔐 Настройки",
+        value=f"URL: {WEBDAV_URL}\nПуть: {WEBDAV_BASE}\nЛогин: {'✅' if WEBDAV_LOGIN else '❌'}\nПароль: {'✅' if WEBDAV_PASSWORD else '❌'}",
+        inline=False
+    )
     
     try:
         client = get_webdav_client()
-        if not client:
-            await interaction.followup.send("❌ Не удалось подключиться!", ephemeral=True)
-            return
-        
-        files = client.list()
-        embed = discord.Embed(
-            title="☁️ WebDAV работает!",
-            description=f"Найдено файлов: {len(files)}",
-            color=discord.Color.green()
-        )
-        if files:
+        if client:
+            files = list_webdav_files()
             embed.add_field(
-                name="📁 Файлы",
-                value="\n".join(files[:10]),
+                name="📡 Подключение",
+                value=f"✅ Подключено! Файлов: {len(files)}",
                 inline=False
             )
-        await interaction.followup.send(embed=embed, ephemeral=True)
+            
+            if files:
+                embed.add_field(
+                    name="📁 Файлы",
+                    value="\n".join(files[:15]),
+                    inline=False
+                )
+        else:
+            embed.add_field(
+                name="📡 Подключение",
+                value="❌ Не удалось подключиться",
+                inline=False
+            )
+            embed.color = discord.Color.red()
     except Exception as e:
-        await interaction.followup.send(f"❌ Ошибка: {e}", ephemeral=True)
+        embed.add_field(
+            name="📡 Подключение",
+            value=f"❌ Ошибка: {e}",
+            inline=False
+        )
+        embed.color = discord.Color.red()
+    
+    await interaction.followup.send(embed=embed, ephemeral=True)
+
+# =====================================================
+#  🔄  СИНХРОНИЗАЦИЯ
+# =====================================================
 
 @bot.tree.command(name="sync", description="🔄 Синхронизировать команды (админ)")
 @app_commands.default_permissions(administrator=True)
@@ -481,6 +957,321 @@ async def slash_sync(interaction: discord.Interaction):
         await interaction.followup.send(embed=embed, ephemeral=True)
     except Exception as e:
         await interaction.followup.send(f"❌ Ошибка: {e}", ephemeral=True)
+
+# =====================================================
+#  📝  ПРЕФИКСНЫЕ КОМАНДЫ
+# =====================================================
+
+@bot.command(name='ping')
+async def ping_command(ctx):
+    await ctx.send(f"🏓 Понг! {round(bot.latency * 1000)}ms")
+
+@bot.command(name='profile')
+async def profile_command(ctx, member: discord.Member = None):
+    if not member:
+        member = ctx.author
+    
+    data = load_level_data()
+    user_id = str(member.id)
+    guild_id = str(ctx.guild.id)
+    
+    profile = get_user_profile(member.id, ctx.guild.id)
+    name = profile.get("name", member.display_name)
+    age = profile.get("age", "Не указан")
+    gender = profile.get("gender", "Не указан")
+    bio = profile.get("bio", "Не указана")
+    
+    if guild_id not in data:
+        data[guild_id] = {}
+    if user_id not in data[guild_id]:
+        data[guild_id][user_id] = {"xp": 0, "level": 0, "messages": 0}
+        save_level_data(data)
+    
+    user_data = data[guild_id][user_id]
+    level = user_data.get("level", 0)
+    xp = user_data.get("xp", 0)
+    next_xp = get_xp_for_level(level)
+    progress = get_progress(user_data)
+    rank = get_rank(member.id, ctx.guild.id)
+    voice_time = get_voice_time(member.id, ctx.guild.id)
+    messages_count = user_data.get("messages", 0)
+    
+    color = get_level_color(level)
+    rank_emoji = get_level_rank_emoji(level)
+    xp_emoji = get_xp_emoji(progress)
+    
+    embed = discord.Embed(
+        title=f"{rank_emoji} Профиль {member.display_name}",
+        color=color,
+        timestamp=datetime.now()
+    )
+    
+    embed.set_thumbnail(url=member.avatar.url if member.avatar else member.default_avatar.url)
+    
+    embed.add_field(
+        name="📇 **Имя**",
+        value=f"**{name}**",
+        inline=True
+    )
+    embed.add_field(
+        name="🎂 **Возраст**",
+        value=f"**{age}**",
+        inline=True
+    )
+    embed.add_field(
+        name="⚧ **Пол**",
+        value=f"**{gender}**",
+        inline=True
+    )
+    
+    embed.add_field(
+        name="💬 **Сообщений**",
+        value=f"**{messages_count}** 💬",
+        inline=True
+    )
+    embed.add_field(
+        name="🎤 **Голосовое время**",
+        value=f"**{format_time(voice_time)}** 🎵",
+        inline=True
+    )
+    embed.add_field(
+        name="🏆 **Место**",
+        value=f"**#{rank if rank else '—'}** 🏅",
+        inline=True
+    )
+    
+    if bio and bio != "Не указана":
+        embed.add_field(
+            name="📝 **Биография**",
+            value=f"_{bio}_",
+            inline=False
+        )
+    
+    bar = create_progress_bar(progress)
+    embed.add_field(
+        name=f"{xp_emoji} **Прогресс до следующего уровня**",
+        value=f"{bar} **{progress:.1f}%**",
+        inline=False
+    )
+    
+    embed.add_field(
+        name="🎯 **Уровень**",
+        value=f"**{level}**",
+        inline=True
+    )
+    embed.add_field(
+        name="⭐ **XP**",
+        value=f"**{xp}** / {next_xp}",
+        inline=True
+    )
+    embed.add_field(
+        name="📊 **Прогресс**",
+        value=f"**{progress:.1f}%**",
+        inline=True
+    )
+    
+    embed.set_footer(
+        text=f"🆔 {member.id} • Запрошено: {ctx.author.display_name}",
+        icon_url=ctx.author.avatar.url if ctx.author.avatar else None
+    )
+    
+    view = ProfileView(member.id, ctx.guild.id)
+    await ctx.send(embed=embed, view=view)
+
+@bot.command(name='top')
+async def top_command(ctx):
+    data = load_level_data()
+    guild_id = str(ctx.guild.id)
+    
+    if guild_id not in data or not data[guild_id]:
+        await ctx.send("📭 Нет активных пользователей")
+        return
+    
+    sorted_users = sorted(
+        data[guild_id].items(),
+        key=lambda x: (x[1].get("level", 0), x[1].get("xp", 0)),
+        reverse=True
+    )
+    
+    embed = discord.Embed(
+        title="🏆 Топ пользователей",
+        color=discord.Color.gold(),
+        timestamp=datetime.now()
+    )
+    
+    if ctx.guild.icon:
+        embed.set_thumbnail(url=ctx.guild.icon.url)
+    
+    for i, (uid, user_data) in enumerate(sorted_users[:10], 1):
+        member = ctx.guild.get_member(int(uid))
+        name = member.display_name if member else f"<@{uid}>"
+        level = user_data.get("level", 0)
+        xp = user_data.get("xp", 0)
+        voice_time = get_voice_time(int(uid), ctx.guild.id)
+        
+        medal = ["🥇", "🥈", "🥉"][i-1] if i <= 3 else f"{i}."
+        embed.add_field(
+            name=f"{medal} {name}",
+            value=f"🎯 Уровень **{level}** | ⭐ {xp} XP\n🎤 {format_time(voice_time)}",
+            inline=False
+        )
+    
+    if len(sorted_users) > 10:
+        embed.set_footer(text=f"И ещё {len(sorted_users)-10} участников...")
+    
+    await ctx.send(embed=embed)
+
+@bot.command(name='server_stats')
+async def server_stats_command(ctx):
+    data = load_level_data()
+    guild_id = str(ctx.guild.id)
+    
+    if guild_id not in data or not data[guild_id]:
+        await ctx.send("📭 Нет данных о пользователях")
+        return
+    
+    users_data = data[guild_id]
+    total_users = len(users_data)
+    total_xp = sum(u.get("xp", 0) for u in users_data.values())
+    total_messages = sum(u.get("messages", 0) for u in users_data.values())
+    max_level = max((u.get("level", 0) for u in users_data.values()), default=0)
+    
+    sorted_users = sorted(
+        users_data.items(),
+        key=lambda x: (x[1].get("level", 0), x[1].get("xp", 0)),
+        reverse=True
+    )
+    
+    embed = discord.Embed(
+        title="📊 Статистика сервера",
+        color=discord.Color.blue(),
+        timestamp=datetime.now()
+    )
+    
+    if ctx.guild.icon:
+        embed.set_thumbnail(url=ctx.guild.icon.url)
+    
+    embed.add_field(
+        name="👥 **Всего участников**",
+        value=f"**{total_users}**",
+        inline=True
+    )
+    embed.add_field(
+        name="⭐ **Всего XP**",
+        value=f"**{total_xp}**",
+        inline=True
+    )
+    embed.add_field(
+        name="👑 **Макс. уровень**",
+        value=f"**{max_level}**",
+        inline=True
+    )
+    
+    embed.add_field(
+        name="💬 **Всего сообщений**",
+        value=f"**{total_messages}**",
+        inline=True
+    )
+    embed.add_field(
+        name="📊 **Средний уровень**",
+        value=f"**{total_xp // total_users if total_users > 0 else 0}**",
+        inline=True
+    )
+    embed.add_field(
+        name="🏅 **Активных участников**",
+        value=f"**{len([u for u in users_data.values() if u.get('messages', 0) > 0])}**",
+        inline=True
+    )
+    
+    top_text = ""
+    for i, (uid, user_data) in enumerate(sorted_users[:3], 1):
+        member = ctx.guild.get_member(int(uid))
+        name = member.display_name if member else f"<@{uid}>"
+        level = user_data.get("level", 0)
+        medals = ["🥇", "🥈", "🥉"]
+        top_text += f"{medals[i-1]} **{name}** - Уровень {level}\n"
+    
+    if top_text:
+        embed.add_field(
+            name="🏆 **Топ участников**",
+            value=top_text,
+            inline=False
+        )
+    
+    await ctx.send(embed=embed)
+
+@bot.command(name='webdav')
+@commands.has_permissions(administrator=True)
+async def webdav_command(ctx):
+    await ctx.send("🔍 Проверка WebDAV...")
+    
+    if not WEBDAV_LOGIN or not WEBDAV_PASSWORD:
+        await ctx.send("❌ WebDAV не настроен!")
+        return
+    
+    try:
+        client = get_webdav_client()
+        if not client:
+            await ctx.send("❌ Не удалось подключиться!")
+            return
+        
+        files = list_webdav_files()
+        embed = discord.Embed(
+            title="☁️ Диагностика WebDAV",
+            color=discord.Color.green() if files else discord.Color.blue()
+        )
+        
+        embed.add_field(
+            name="📡 Подключение",
+            value="✅ Подключено успешно!",
+            inline=False
+        )
+        
+        embed.add_field(
+            name="📁 Файлов на сервере",
+            value=str(len(files)),
+            inline=True
+        )
+        
+        if files:
+            embed.add_field(
+                name="📋 Список файлов",
+                value="\n".join(files[:10]),
+                inline=False
+            )
+        else:
+            embed.add_field(
+                name="📋 Список файлов",
+                value="Папка пуста",
+                inline=False
+            )
+        
+        await ctx.send(embed=embed)
+        
+    except Exception as e:
+        await ctx.send(f"❌ Ошибка: {e}")
+
+@bot.command(name='sync')
+@commands.has_permissions(administrator=True)
+async def sync_commands(ctx):
+    await ctx.send("🔄 Синхронизация команд...")
+    
+    try:
+        await bot.tree.sync()
+        await ctx.send("✅ Глобальная синхронизация выполнена!")
+        
+        for guild in bot.guilds:
+            try:
+                await bot.tree.sync(guild=guild)
+                await ctx.send(f"   ✅ Синхронизировано для {guild.name}")
+            except Exception as e:
+                await ctx.send(f"   ❌ Ошибка для {guild.name}: {e}")
+        
+        commands_list = [cmd.name for cmd in bot.tree.get_commands()]
+        await ctx.send(f"📋 Команды: {', '.join(commands_list)}")
+        
+    except Exception as e:
+        await ctx.send(f"❌ Ошибка: {e}")
 
 # =====================================================
 #  💬  XP ЗА СООБЩЕНИЯ
