@@ -5,7 +5,7 @@ import os
 TOKEN = os.getenv("TOKEN")
 if not TOKEN:
     raise ValueError("❌ Токен не найден! Установите переменную окружения TOKEN")
-    
+
 import discord
 from discord.ext import commands
 from discord import ui, ButtonStyle, SelectOption, app_commands
@@ -13,6 +13,29 @@ import json
 import asyncio
 import math
 from datetime import datetime, timedelta
+
+# =====================================================
+#  🔄  KEEP-ALIVE ДЛЯ RENDER
+# =====================================================
+
+from flask import Flask
+import threading
+
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "🎯 Mohist_Level работает!"
+
+def run():
+    app.run(host='0.0.0.0', port=10000)
+
+def keep_alive():
+    t = threading.Thread(target=run)
+    t.start()
+
+keep_alive()
+print("✅ Keep-Alive запущен!")
 
 # =====================================================
 #  📁  РАБОТА С ДАННЫМИ
@@ -92,31 +115,16 @@ def format_time(seconds):
     secs = int(seconds % 60)
     
     if hours > 0:
-        return f"{hours} дн {hours} ч {minutes} мин {secs} сек" if hours > 24 else f"{hours} ч {minutes} мин {secs} сек"
+        return f"{hours}ч {minutes}м {secs}с"
     elif minutes > 0:
-        return f"{minutes} мин {secs} сек"
+        return f"{minutes}м {secs}с"
     else:
-        return f"{secs} сек"
+        return f"{secs}с"
 
 def create_progress_bar(progress, length=15):
     filled = int(progress / 100 * length)
     empty = length - filled
     return f"`{'█' * filled}{'░' * empty}`"
-
-# =====================================================
-#  🎮  БОТ
-# =====================================================
-
-intents = discord.Intents.default()
-intents.message_content = True
-intents.guilds = True
-intents.members = True
-intents.voice_states = True
-
-bot = commands.Bot(command_prefix='!', intents=intents)
-
-voice_tracker = {}
-message_tracker = {}
 
 # =====================================================
 #  📊  ФУНКЦИИ ДЛЯ XP И УРОВНЕЙ
@@ -162,6 +170,36 @@ def get_voice_time(user_id, guild_id):
     data = load_voice_time()
     guild_data = data.get(str(guild_id), {})
     return guild_data.get(str(user_id), 0)
+
+# =====================================================
+#  🎮  БОТ
+# =====================================================
+
+intents = discord.Intents.default()
+intents.message_content = True
+intents.guilds = True
+intents.members = True
+intents.voice_states = True
+
+bot = commands.Bot(command_prefix='!', intents=intents)
+
+voice_tracker = {}
+message_tracker = {}
+
+@bot.event
+async def on_ready():
+    print(f'✅ Бот {bot.user} запущен!')
+    print(f'📡 Серверов: {len(bot.guilds)}')
+    print('=' * 50)
+    await bot.change_presence(activity=discord.Activity(
+        type=discord.ActivityType.watching,
+        name="🎯 Уровни | /profile"
+    ))
+    try:
+        await bot.tree.sync()
+        print("✅ Слеш-команды синхронизированы!")
+    except Exception as e:
+        print(f"❌ Ошибка синхронизации: {e}")
 
 # =====================================================
 #  ✏️  РЕДАКТИРОВАНИЕ ПРОФИЛЯ
@@ -333,30 +371,11 @@ async def slash_level(interaction: discord.Interaction):
     )
     embed.add_field(
         name="📋 Команды",
-        value="`/level` - Меню\n`/profile` - Красивый профиль\n`/top` - Топ\n`/rank` - Рейтинг\n`/settings` - Настройки (админ)",
+        value="`/profile` - Красивый профиль\n`/top` - Топ\n`/rank` - Рейтинг\n`/settings` - Настройки (админ)",
         inline=False
     )
     embed.set_footer(text="💡 Будьте активны!")
-    await interaction.response.send_message(embed=embed, view=LevelMainMenu())
-
-class LevelMainMenu(ui.View):
-    def __init__(self):
-        super().__init__(timeout=180)
-    
-    @ui.button(label="📊 Профиль", style=ButtonStyle.primary, row=0)
-    async def profile(self, interaction: discord.Interaction, button: ui.Button):
-        await slash_profile.callback(interaction)
-    
-    @ui.button(label="🏆 Топ", style=ButtonStyle.primary, row=0)
-    async def top(self, interaction: discord.Interaction, button: ui.Button):
-        await slash_top(interaction)
-    
-    @ui.button(label="⚙️ Настройки", style=ButtonStyle.secondary, row=1)
-    async def settings(self, interaction: discord.Interaction, button: ui.Button):
-        if not interaction.user.guild_permissions.administrator:
-            await interaction.response.send_message("❌ Только администраторы!", ephemeral=True)
-            return
-        await slash_settings.callback(interaction)
+    await interaction.response.send_message(embed=embed)
 
 @bot.tree.command(name="top", description="🏆 Топ пользователей")
 async def slash_top(interaction: discord.Interaction):
@@ -424,7 +443,7 @@ async def slash_rank(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed)
 
 # =====================================================
-#  ⚙️  НАСТРОЙКИ
+#  ⚙️  НАСТРОЙКИ (ПОЛНОЕ МЕНЮ)
 # =====================================================
 
 @bot.tree.command(name="settings", description="⚙️ Настройки (админ)")
@@ -456,56 +475,78 @@ class FullSettingsView(ui.View):
         
         config = load_config()
         
-        self.add_item(ui.Button(
+        xp_btn = ui.Button(
             label=f"💬 XP за сообщ: {config.get('message_xp', 1)}",
             style=ButtonStyle.primary,
             row=0,
             custom_id="msg_xp"
-        ))
-        self.add_item(ui.Button(
+        )
+        xp_btn.callback = self.msg_xp_callback
+        self.add_item(xp_btn)
+        
+        voice_btn = ui.Button(
             label=f"🎵 XP за голос: {config.get('voice_xp', 2)}",
             style=ButtonStyle.primary,
             row=0,
             custom_id="voice_xp"
-        ))
-        self.add_item(ui.Button(
+        )
+        voice_btn.callback = self.voice_xp_callback
+        self.add_item(voice_btn)
+        
+        int_btn = ui.Button(
             label=f"⏱️ Интервал: {config.get('voice_interval', 60)}с",
             style=ButtonStyle.primary,
             row=1,
             custom_id="interval_settings"
-        ))
+        )
+        int_btn.callback = self.interval_callback
+        self.add_item(int_btn)
         
         status = "✅ Вкл" if config.get('level_up_message', True) else "❌ Выкл"
-        self.add_item(ui.Button(
+        notify_btn = ui.Button(
             label=f"📢 Оповещения: {status}",
             style=ButtonStyle.success if config.get('level_up_message', True) else ButtonStyle.danger,
             row=1,
             custom_id="notify_settings"
-        ))
-        self.add_item(ui.Button(
+        )
+        notify_btn.callback = self.notify_callback
+        self.add_item(notify_btn)
+        
+        channel_btn = ui.Button(
             label="📌 Канал оповещений",
             style=ButtonStyle.secondary,
             row=2,
             custom_id="channel_settings"
-        ))
-        self.add_item(ui.Button(
+        )
+        channel_btn.callback = self.channel_callback
+        self.add_item(channel_btn)
+        
+        stats_btn = ui.Button(
             label="📊 Статистика",
             style=ButtonStyle.secondary,
             row=2,
             custom_id="stats_settings"
-        ))
-        self.add_item(ui.Button(
+        )
+        stats_btn.callback = self.stats_callback
+        self.add_item(stats_btn)
+        
+        reset_btn = ui.Button(
             label="🗑️ Сбросить всё",
             style=ButtonStyle.danger,
             row=3,
             custom_id="reset_settings"
-        ))
-        self.add_item(ui.Button(
+        )
+        reset_btn.callback = self.reset_callback
+        self.add_item(reset_btn)
+        
+        close_btn = ui.Button(
             label="❌ Закрыть",
             style=ButtonStyle.danger,
             row=3,
             custom_id="close_settings"
-        ))
+        )
+        close_btn.callback = self.close_callback
+        self.add_item(close_btn)
     
     async def interaction_check(self, interaction: discord.Interaction):
         if not interaction.user.guild_permissions.administrator:
@@ -513,28 +554,11 @@ class FullSettingsView(ui.View):
             return False
         return True
     
-    async def callback(self, interaction: discord.Interaction):
-        custom_id = interaction.data.get('custom_id')
+    async def msg_xp_callback(self, interaction: discord.Interaction):
+        if not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message("❌ Только администраторы!", ephemeral=True)
+            return
         
-        if custom_id == "msg_xp":
-            await self.msg_xp_menu(interaction)
-        elif custom_id == "voice_xp":
-            await self.voice_xp_menu(interaction)
-        elif custom_id == "interval_settings":
-            await self.interval_menu(interaction)
-        elif custom_id == "notify_settings":
-            await self.toggle_notify(interaction)
-        elif custom_id == "channel_settings":
-            await self.set_channel(interaction)
-        elif custom_id == "stats_settings":
-            await self.show_stats(interaction)
-        elif custom_id == "reset_settings":
-            await self.reset_data(interaction)
-        elif custom_id == "close_settings":
-            await interaction.message.delete()
-            await interaction.response.send_message("✅ Меню закрыто", ephemeral=True)
-    
-    async def msg_xp_menu(self, interaction: discord.Interaction):
         await interaction.response.defer()
         view = MsgXPView()
         embed = discord.Embed(
@@ -544,7 +568,11 @@ class FullSettingsView(ui.View):
         )
         await interaction.followup.send(embed=embed, view=view)
     
-    async def voice_xp_menu(self, interaction: discord.Interaction):
+    async def voice_xp_callback(self, interaction: discord.Interaction):
+        if not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message("❌ Только администраторы!", ephemeral=True)
+            return
+        
         await interaction.response.defer()
         view = VoiceXPView()
         embed = discord.Embed(
@@ -554,7 +582,11 @@ class FullSettingsView(ui.View):
         )
         await interaction.followup.send(embed=embed, view=view)
     
-    async def interval_menu(self, interaction: discord.Interaction):
+    async def interval_callback(self, interaction: discord.Interaction):
+        if not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message("❌ Только администраторы!", ephemeral=True)
+            return
+        
         await interaction.response.defer()
         view = IntervalView()
         embed = discord.Embed(
@@ -564,7 +596,11 @@ class FullSettingsView(ui.View):
         )
         await interaction.followup.send(embed=embed, view=view)
     
-    async def toggle_notify(self, interaction: discord.Interaction):
+    async def notify_callback(self, interaction: discord.Interaction):
+        if not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message("❌ Только администраторы!", ephemeral=True)
+            return
+        
         config = load_config()
         config['level_up_message'] = not config.get('level_up_message', True)
         save_config(config)
@@ -577,17 +613,28 @@ class FullSettingsView(ui.View):
         )
         await interaction.response.edit_message(embed=embed, view=self)
     
-    async def set_channel(self, interaction: discord.Interaction):
+    async def channel_callback(self, interaction: discord.Interaction):
+        if not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message("❌ Только администраторы!", ephemeral=True)
+            return
+        
         modal = ChannelModal()
         await interaction.response.send_modal(modal)
     
-    async def show_stats(self, interaction: discord.Interaction):
+    async def stats_callback(self, interaction: discord.Interaction):
+        if not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message("❌ Только администраторы!", ephemeral=True)
+            return
+        
         await interaction.response.defer()
+        
         data = load_level_data()
         guild_id = str(interaction.guild.id)
+        
         total_users = len(data.get(guild_id, {}))
         total_xp = sum(u.get("xp", 0) for u in data.get(guild_id, {}).values())
         max_level = max((u.get("level", 0) for u in data.get(guild_id, {}).values()), default=0)
+        
         embed = discord.Embed(
             title="📊 Статистика сервера",
             color=discord.Color.blue()
@@ -595,9 +642,14 @@ class FullSettingsView(ui.View):
         embed.add_field(name="👥 Участников", value=str(total_users), inline=True)
         embed.add_field(name="⭐ Всего XP", value=str(total_xp), inline=True)
         embed.add_field(name="🎯 Макс. уровень", value=str(max_level), inline=True)
+        
         await interaction.followup.send(embed=embed, ephemeral=True)
     
-    async def reset_data(self, interaction: discord.Interaction):
+    async def reset_callback(self, interaction: discord.Interaction):
+        if not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message("❌ Только администраторы!", ephemeral=True)
+            return
+        
         embed = discord.Embed(
             title="⚠️ Подтверждение",
             description="Вы уверены, что хотите сбросить ВСЕ данные?",
@@ -605,18 +657,30 @@ class FullSettingsView(ui.View):
         )
         view = ConfirmResetView()
         await interaction.response.edit_message(embed=embed, view=view)
+    
+    async def close_callback(self, interaction: discord.Interaction):
+        if not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message("❌ Только администраторы!", ephemeral=True)
+            return
+        
+        await interaction.message.delete()
+        await interaction.response.send_message("✅ Меню закрыто", ephemeral=True)
 
 class MsgXPView(ui.View):
     def __init__(self):
         super().__init__(timeout=60)
         for val in [1, 2, 3, 4, 5, 8, 10]:
-            self.add_item(ui.Button(
+            btn = ui.Button(
                 label=f"{val} XP",
                 style=ButtonStyle.primary if val == load_config().get('message_xp', 1) else ButtonStyle.secondary,
                 row=0 if val <= 5 else 1,
                 custom_id=f"msgxp_{val}"
-            ))
-        self.add_item(ui.Button(label="🔙 Назад", style=ButtonStyle.danger, row=2, custom_id="back"))
+            )
+            btn.callback = self.callback
+            self.add_item(btn)
+        back_btn = ui.Button(label="🔙 Назад", style=ButtonStyle.danger, row=2, custom_id="back")
+        back_btn.callback = self.back_callback
+        self.add_item(back_btn)
     
     async def interaction_check(self, interaction: discord.Interaction):
         if not interaction.user.guild_permissions.administrator:
@@ -625,12 +689,7 @@ class MsgXPView(ui.View):
         return True
     
     async def callback(self, interaction: discord.Interaction):
-        custom_id = interaction.data.get('custom_id')
-        if custom_id == "back":
-            await interaction.response.defer()
-            await interaction.followup.send(embed=discord.Embed(title="⚙️ Настройки", color=discord.Color.blue()), view=FullSettingsView())
-            return
-        val = int(custom_id.split("_")[1])
+        val = int(interaction.data.get('custom_id').split("_")[1])
         config = load_config()
         config['message_xp'] = val
         save_config(config)
@@ -640,18 +699,30 @@ class MsgXPView(ui.View):
             color=discord.Color.green()
         )
         await interaction.response.edit_message(embed=embed, view=MsgXPView())
+    
+    async def back_callback(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        embed = discord.Embed(
+            title="⚙️ Настройки",
+            color=discord.Color.blue()
+        )
+        await interaction.followup.send(embed=embed, view=FullSettingsView())
 
 class VoiceXPView(ui.View):
     def __init__(self):
         super().__init__(timeout=60)
         for val in [1, 2, 3, 4, 5, 8, 10, 15, 20]:
-            self.add_item(ui.Button(
+            btn = ui.Button(
                 label=f"{val} XP",
                 style=ButtonStyle.primary if val == load_config().get('voice_xp', 2) else ButtonStyle.secondary,
                 row=0 if val <= 5 else 1,
                 custom_id=f"voicexp_{val}"
-            ))
-        self.add_item(ui.Button(label="🔙 Назад", style=ButtonStyle.danger, row=2, custom_id="back"))
+            )
+            btn.callback = self.callback
+            self.add_item(btn)
+        back_btn = ui.Button(label="🔙 Назад", style=ButtonStyle.danger, row=2, custom_id="back")
+        back_btn.callback = self.back_callback
+        self.add_item(back_btn)
     
     async def interaction_check(self, interaction: discord.Interaction):
         if not interaction.user.guild_permissions.administrator:
@@ -660,12 +731,7 @@ class VoiceXPView(ui.View):
         return True
     
     async def callback(self, interaction: discord.Interaction):
-        custom_id = interaction.data.get('custom_id')
-        if custom_id == "back":
-            await interaction.response.defer()
-            await interaction.followup.send(embed=discord.Embed(title="⚙️ Настройки", color=discord.Color.blue()), view=FullSettingsView())
-            return
-        val = int(custom_id.split("_")[1])
+        val = int(interaction.data.get('custom_id').split("_")[1])
         config = load_config()
         config['voice_xp'] = val
         save_config(config)
@@ -675,18 +741,30 @@ class VoiceXPView(ui.View):
             color=discord.Color.green()
         )
         await interaction.response.edit_message(embed=embed, view=VoiceXPView())
+    
+    async def back_callback(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        embed = discord.Embed(
+            title="⚙️ Настройки",
+            color=discord.Color.blue()
+        )
+        await interaction.followup.send(embed=embed, view=FullSettingsView())
 
 class IntervalView(ui.View):
     def __init__(self):
         super().__init__(timeout=60)
         for val in [15, 30, 45, 60, 90, 120, 180, 300]:
-            self.add_item(ui.Button(
+            btn = ui.Button(
                 label=f"{val}с",
                 style=ButtonStyle.primary if val == load_config().get('voice_interval', 60) else ButtonStyle.secondary,
                 row=0 if val <= 60 else 1,
                 custom_id=f"int_{val}"
-            ))
-        self.add_item(ui.Button(label="🔙 Назад", style=ButtonStyle.danger, row=2, custom_id="back"))
+            )
+            btn.callback = self.callback
+            self.add_item(btn)
+        back_btn = ui.Button(label="🔙 Назад", style=ButtonStyle.danger, row=2, custom_id="back")
+        back_btn.callback = self.back_callback
+        self.add_item(back_btn)
     
     async def interaction_check(self, interaction: discord.Interaction):
         if not interaction.user.guild_permissions.administrator:
@@ -695,12 +773,7 @@ class IntervalView(ui.View):
         return True
     
     async def callback(self, interaction: discord.Interaction):
-        custom_id = interaction.data.get('custom_id')
-        if custom_id == "back":
-            await interaction.response.defer()
-            await interaction.followup.send(embed=discord.Embed(title="⚙️ Настройки", color=discord.Color.blue()), view=FullSettingsView())
-            return
-        val = int(custom_id.split("_")[1])
+        val = int(interaction.data.get('custom_id').split("_")[1])
         config = load_config()
         config['voice_interval'] = val
         save_config(config)
@@ -710,6 +783,14 @@ class IntervalView(ui.View):
             color=discord.Color.green()
         )
         await interaction.response.edit_message(embed=embed, view=IntervalView())
+    
+    async def back_callback(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        embed = discord.Embed(
+            title="⚙️ Настройки",
+            color=discord.Color.blue()
+        )
+        await interaction.followup.send(embed=embed, view=FullSettingsView())
 
 class ChannelModal(ui.Modal, title="📌 Канал оповещений"):
     channel_id = ui.TextInput(
@@ -747,15 +828,18 @@ class ConfirmResetView(ui.View):
         if not interaction.user.guild_permissions.administrator:
             await interaction.response.send_message("❌ Только администраторы!", ephemeral=True)
             return
+        
         data = load_level_data()
         voice_data = load_voice_time()
         guild_id = str(interaction.guild.id)
+        
         if guild_id in data:
             del data[guild_id]
             save_level_data(data)
         if guild_id in voice_data:
             del voice_data[guild_id]
             save_voice_time(voice_data)
+        
         embed = discord.Embed(
             title="🗑️ Данные сброшены!",
             color=discord.Color.red()
@@ -917,45 +1001,6 @@ async def on_voice_state_update(member, before, after):
             del voice_tracker[user_id][guild_id]
             if not voice_tracker[user_id]:
                 del voice_tracker[user_id]
-
-@bot.event
-async def on_ready():
-    print(f'✅ Бот {bot.user} запущен!')
-    print(f'📡 Серверов: {len(bot.guilds)}')
-    print('=' * 50)
-    await bot.change_presence(activity=discord.Activity(
-        type=discord.ActivityType.watching,
-        name="🎯 Уровни | /profile"
-    ))
-    try:
-        await bot.tree.sync()
-        print("✅ Команды синхронизированы!")
-    except Exception as e:
-        print(f"❌ Ошибка: {e}")
-
-# =====================================================
-#  🔄  KEEP-ALIVE ДЛЯ RENDER
-# =====================================================
-
-from flask import Flask
-import threading
-
-app = Flask('')
-
-@app.route('/')
-def home():
-    return "🎯 Mohist_Level работает!"
-
-def run():
-    app.run(host='0.0.0.0', port=10000)
-
-def keep_alive():
-    t = threading.Thread(target=run)
-    t.start()
-
-keep_alive()
-
-print("✅ Keep-Alive запущен!")
 
 # =====================================================
 #  🚀  ЗАПУСК
