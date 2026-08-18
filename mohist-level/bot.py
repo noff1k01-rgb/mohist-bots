@@ -18,7 +18,7 @@ from datetime import datetime, timedelta
 #  ☁️  НАСТРОЙКИ WEBDAV (ЛИЧНОЕ ХРАНИЛИЩЕ)
 # =====================================================
 
-WEBDAV_URL = os.getenv("WEBDAV_URL", "https://tentacis.netcraze.pro:8083/webdav/%D0%BB%D0%B8%D1%86%D0%BD%D0%BE%D0%B5/Divace/server/")
+WEBDAV_URL = os.getenv("WEBDAV_URL", "https://tentacis.netcraze.pro:8083/webdav/licnoe/Divace/server/")
 WEBDAV_LOGIN = os.getenv("WEBDAV_LOGIN")
 WEBDAV_PASSWORD = os.getenv("WEBDAV_PASSWORD")
 
