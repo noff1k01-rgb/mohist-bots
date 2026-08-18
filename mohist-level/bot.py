@@ -2,28 +2,30 @@
 # -*- coding: utf-8 -*-
 
 import os
-TOKEN = os.getenv("TOKEN")
-if not TOKEN:
-    raise ValueError("❌ Токен не найден! Установите переменную окружения TOKEN")
-
 import discord
 from discord.ext import commands, tasks
 from discord import ui, ButtonStyle, SelectOption, app_commands
 import json
 import asyncio
 import math
+import time
 from datetime import datetime, timedelta
 
 # =====================================================
-#  ☁️  НАСТРОЙКИ WEBDAV (ЛИЧНОЕ ХРАНИЛИЩЕ)
+#  🔐  ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ
 # =====================================================
 
-WEBDAV_URL = os.getenv("WEBDAV_URL", "https://tentacis.netcraze.pro:8083/webdav/licnoe/Divace/server/")
+TOKEN = os.getenv("TOKEN")
+if not TOKEN:
+    raise ValueError("❌ Токен не найден! Установите переменную окружения TOKEN")
+
+WEBDAV_URL = os.getenv("WEBDAV_URL", "https://tentacis.netcraze.pro:8083/webdav/%D0%BB%D0%B8%D1%86%D0%BD%D0%BE%D0%B5/Divace/server/")
 WEBDAV_LOGIN = os.getenv("WEBDAV_LOGIN")
 WEBDAV_PASSWORD = os.getenv("WEBDAV_PASSWORD")
 
-if not WEBDAV_LOGIN or not WEBDAV_PASSWORD:
-    print("⚠️ WebDAV не настроен! Данные будут сохраняться локально.")
+# =====================================================
+#  📦  ИМПОРТ WEBDAV
+# =====================================================
 
 try:
     from webdav3.client import Client
@@ -33,12 +35,12 @@ except ImportError:
     print("⚠️ webdavclient3 не установлен! Установите: pip install webdavclient3")
 
 # =====================================================
-#  📁  РАБОТА С WEBDAV
+#  ☁️  РАБОТА С WEBDAV (УЛУЧШЕННАЯ)
 # =====================================================
 
 def get_webdav_client():
     """Создаёт клиент для WebDAV"""
-    if not WEBDAV_AVAILABLE:
+    if not WEBDAV_AVAILABLE or not WEBDAV_LOGIN or not WEBDAV_PASSWORD:
         return None
     
     options = {
@@ -46,42 +48,83 @@ def get_webdav_client():
         'webdav_login': WEBDAV_LOGIN,
         'webdav_password': WEBDAV_PASSWORD,
         'disable_ssl_certificate_validation': True,
+        'webdav_timeout': 30,
     }
     return Client(options)
 
-def upload_to_webdav(filename, data):
-    """Загружает данные на WebDAV сервер"""
-    if not WEBDAV_AVAILABLE or not WEBDAV_LOGIN:
+def upload_to_webdav(filename, data, retry=3):
+    """Загружает данные на WebDAV с повторными попытками"""
+    if not WEBDAV_AVAILABLE or not WEBDAV_LOGIN or not WEBDAV_PASSWORD:
         return False
     
-    try:
-        client = get_webdav_client()
-        content = json.dumps(data, indent=4, ensure_ascii=False)
-        
+    for attempt in range(retry):
         try:
-            client.download(filename)
-            client.upload(filename, content.encode('utf-8'))
-            print(f"✅ Обновлён на WebDAV: {filename}")
-        except:
-            client.upload(filename, content.encode('utf-8'))
-            print(f"✅ Загружен на WebDAV: {filename}")
-        return True
-    except Exception as e:
-        print(f"❌ Ошибка загрузки {filename}: {e}")
-        return False
+            client = get_webdav_client()
+            if not client:
+                return False
+            
+            content = json.dumps(data, indent=4, ensure_ascii=False)
+            
+            # Пытаемся загрузить
+            try:
+                # Проверяем, существует ли файл
+                client.download(filename)
+                # Обновляем
+                client.upload(filename, content.encode('utf-8'))
+                print(f"✅ Обновлён на WebDAV: {filename}")
+            except:
+                # Создаём новый
+                client.upload(filename, content.encode('utf-8'))
+                print(f"✅ Создан на WebDAV: {filename}")
+            
+            return True
+            
+        except Exception as e:
+            print(f"❌ Попытка {attempt+1}/{retry} загрузки {filename}: {e}")
+            if attempt < retry - 1:
+                time.sleep(2 ** attempt)  # Экспоненциальная задержка
+    
+    print(f"❌ Не удалось загрузить {filename} после {retry} попыток")
+    return False
 
-def download_from_webdav(filename):
-    """Скачивает данные с WebDAV сервера"""
-    if not WEBDAV_AVAILABLE or not WEBDAV_LOGIN:
+def download_from_webdav(filename, retry=3):
+    """Скачивает данные с WebDAV с повторными попытками"""
+    if not WEBDAV_AVAILABLE or not WEBDAV_LOGIN or not WEBDAV_PASSWORD:
         return None
+    
+    for attempt in range(retry):
+        try:
+            client = get_webdav_client()
+            if not client:
+                return None
+            
+            content = client.download(filename)
+            data = json.loads(content.decode('utf-8'))
+            print(f"✅ Загружен с WebDAV: {filename}")
+            return data
+            
+        except Exception as e:
+            print(f"⚠️ Попытка {attempt+1}/{retry} загрузки {filename}: {e}")
+            if attempt < retry - 1:
+                time.sleep(2 ** attempt)
+    
+    print(f"⚠️ Файл {filename} не найден на WebDAV")
+    return None
+
+def test_webdav_connection():
+    """Проверяет подключение к WebDAV"""
+    if not WEBDAV_AVAILABLE or not WEBDAV_LOGIN or not WEBDAV_PASSWORD:
+        return False, "WebDAV не настроен"
     
     try:
         client = get_webdav_client()
-        content = client.download(filename)
-        return json.loads(content.decode('utf-8'))
+        if not client:
+            return False, "Не удалось создать клиент"
+        
+        client.list()
+        return True, "Подключено успешно"
     except Exception as e:
-        print(f"⚠️ Файл {filename} не найден на WebDAV: {e}")
-        return None
+        return False, f"Ошибка: {str(e)}"
 
 # =====================================================
 #  🔄  KEEP-ALIVE ДЛЯ RENDER
@@ -96,18 +139,23 @@ app = Flask('')
 def home():
     return "🎯 Mohist_Level работает!"
 
+@app.route('/health')
+def health():
+    return "OK", 200
+
 def run():
-    app.run(host='0.0.0.0', port=10000)
+    app.run(host='0.0.0.0', port=10000, debug=False)
 
 def keep_alive():
     t = threading.Thread(target=run)
+    t.daemon = True
     t.start()
 
 keep_alive()
 print("✅ Keep-Alive запущен!")
 
 # =====================================================
-#  📁  РАБОТА С ДАННЫМИ (С ПОДДЕРЖКОЙ WEBDAV)
+#  📁  РАБОТА С ДАННЫМИ (С ПРИОРИТЕТОМ WEBDAV)
 # =====================================================
 
 LEVEL_FILE = "level_data.json"
@@ -116,20 +164,38 @@ VOICE_TIME_FILE = "voice_time.json"
 PROFILE_FILE = "user_profiles.json"
 
 def load_level_data():
-    """Загружает данные с WebDAV или локально"""
+    """Загружает данные - сначала с WebDAV, потом локально"""
+    # Сначала пробуем загрузить с WebDAV
     data = download_from_webdav("level_data.json")
     if data is not None:
         return data
+    
+    # Если нет - загружаем локально
     try:
-        with open(LEVEL_FILE, 'r') as f:
-            return json.load(f)
-    except:
+        with open(LEVEL_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            print(f"📂 Загружено локально: {LEVEL_FILE}")
+            # Сразу сохраняем на WebDAV
+            upload_to_webdav("level_data.json", data)
+            return data
+    except FileNotFoundError:
+        print(f"📭 Создаю новый файл: {LEVEL_FILE}")
+        return {}
+    except Exception as e:
+        print(f"❌ Ошибка загрузки {LEVEL_FILE}: {e}")
         return {}
 
 def save_level_data(data):
     """Сохраняет данные на WebDAV и локально"""
-    with open(LEVEL_FILE, 'w') as f:
-        json.dump(data, f, indent=4)
+    # Всегда сохраняем локально
+    try:
+        with open(LEVEL_FILE, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=4, ensure_ascii=False)
+        print(f"💾 Локально сохранено: {LEVEL_FILE}")
+    except Exception as e:
+        print(f"❌ Ошибка локального сохранения: {e}")
+    
+    # И на WebDAV
     upload_to_webdav("level_data.json", data)
 
 def load_voice_time():
@@ -137,14 +203,23 @@ def load_voice_time():
     if data is not None:
         return data
     try:
-        with open(VOICE_TIME_FILE, 'r') as f:
-            return json.load(f)
-    except:
+        with open(VOICE_TIME_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            upload_to_webdav("voice_time.json", data)
+            return data
+    except FileNotFoundError:
+        return {}
+    except Exception as e:
+        print(f"❌ Ошибка загрузки {VOICE_TIME_FILE}: {e}")
         return {}
 
 def save_voice_time(data):
-    with open(VOICE_TIME_FILE, 'w') as f:
-        json.dump(data, f, indent=4)
+    try:
+        with open(VOICE_TIME_FILE, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=4, ensure_ascii=False)
+        print(f"💾 Локально сохранено: {VOICE_TIME_FILE}")
+    except Exception as e:
+        print(f"❌ Ошибка локального сохранения: {e}")
     upload_to_webdav("voice_time.json", data)
 
 def load_profiles():
@@ -152,14 +227,23 @@ def load_profiles():
     if data is not None:
         return data
     try:
-        with open(PROFILE_FILE, 'r') as f:
-            return json.load(f)
-    except:
+        with open(PROFILE_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            upload_to_webdav("user_profiles.json", data)
+            return data
+    except FileNotFoundError:
+        return {}
+    except Exception as e:
+        print(f"❌ Ошибка загрузки {PROFILE_FILE}: {e}")
         return {}
 
 def save_profiles(data):
-    with open(PROFILE_FILE, 'w') as f:
-        json.dump(data, f, indent=4)
+    try:
+        with open(PROFILE_FILE, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=4, ensure_ascii=False)
+        print(f"💾 Локально сохранено: {PROFILE_FILE}")
+    except Exception as e:
+        print(f"❌ Ошибка локального сохранения: {e}")
     upload_to_webdav("user_profiles.json", data)
 
 def load_config():
@@ -167,10 +251,12 @@ def load_config():
     if data is not None:
         return data
     try:
-        with open(CONFIG_FILE, 'r') as f:
-            return json.load(f)
-    except:
-        return {
+        with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            upload_to_webdav("level_config.json", data)
+            return data
+    except FileNotFoundError:
+        default_config = {
             "message_xp": 1,
             "voice_xp": 2,
             "voice_interval": 60,
@@ -179,10 +265,19 @@ def load_config():
             "roles": {},
             "message_cooldown": 60
         }
+        save_config(default_config)
+        return default_config
+    except Exception as e:
+        print(f"❌ Ошибка загрузки {CONFIG_FILE}: {e}")
+        return {}
 
 def save_config(data):
-    with open(CONFIG_FILE, 'w') as f:
-        json.dump(data, f, indent=4)
+    try:
+        with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=4, ensure_ascii=False)
+        print(f"💾 Локально сохранено: {CONFIG_FILE}")
+    except Exception as e:
+        print(f"❌ Ошибка локального сохранения: {e}")
     upload_to_webdav("level_config.json", data)
 
 # =====================================================
@@ -193,6 +288,8 @@ def save_config(data):
 async def auto_save():
     """Автоматически сохраняет данные каждую минуту"""
     try:
+        print(f"💾 Автосохранение начато: {datetime.now().strftime('%H:%M:%S')}")
+        
         # Сохраняем конфиг
         config = load_config()
         save_config(config)
@@ -209,7 +306,7 @@ async def auto_save():
         profiles = load_profiles()
         save_profiles(profiles)
         
-        print(f"💾 Автосохранение: {datetime.now().strftime('%H:%M:%S')}")
+        print(f"💾 Автосохранение завершено: {datetime.now().strftime('%H:%M:%S')}")
     except Exception as e:
         print(f"❌ Ошибка автосохранения: {e}")
 
@@ -217,7 +314,9 @@ async def auto_save():
 async def auto_save_webdav():
     """Автоматически сохраняет данные на WebDAV каждые 5 минут"""
     try:
-        if WEBDAV_LOGIN:
+        if WEBDAV_LOGIN and WEBDAV_PASSWORD:
+            print(f"☁️ WebDAV автосохранение: {datetime.now().strftime('%H:%M:%S')}")
+            
             # Сохраняем на WebDAV
             data = load_level_data()
             upload_to_webdav("level_data.json", data)
@@ -230,8 +329,6 @@ async def auto_save_webdav():
             
             config = load_config()
             upload_to_webdav("level_config.json", config)
-            
-            print(f"☁️ WebDAV автосохранение: {datetime.now().strftime('%H:%M:%S')}")
     except Exception as e:
         print(f"❌ Ошибка WebDAV автосохранения: {e}")
 
@@ -257,8 +354,10 @@ def get_progress(user_data):
     level = user_data.get("level", 0)
     current_level_xp = get_xp_for_level(level - 1) if level > 0 else 0
     next_level_xp = get_xp_for_level(level)
+    if next_level_xp == current_level_xp:
+        return 100
     progress = (xp - current_level_xp) / (next_level_xp - current_level_xp) * 100
-    return min(progress, 100)
+    return min(max(progress, 0), 100)
 
 def get_rank(user_id, guild_id):
     data = load_level_data()
@@ -328,19 +427,42 @@ message_tracker = {}
 async def on_ready():
     print(f'✅ Бот {bot.user} запущен!')
     print(f'📡 Серверов: {len(bot.guilds)}')
-    print(f'☁️ WebDAV: {"✅" if WEBDAV_LOGIN else "❌"}')
+    
+    # Проверяем WebDAV
+    print('☁️ Проверка WebDAV...')
+    success, message = test_webdav_connection()
+    if success:
+        print(f'☁️ WebDAV: ✅ {message}')
+        # Проверяем наличие файлов
+        try:
+            client = get_webdav_client()
+            if client:
+                files = client.list()
+                required = ["level_data.json", "voice_time.json", "user_profiles.json", "level_config.json"]
+                for f in required:
+                    if f in files:
+                        print(f'   ✅ {f} найден')
+                    else:
+                        print(f'   ⚠️ {f} отсутствует (будет создан)')
+        except Exception as e:
+            print(f'   ⚠️ Ошибка при проверке файлов: {e}')
+    else:
+        print(f'☁️ WebDAV: ❌ {message}')
+    
     print('=' * 50)
+    
     await bot.change_presence(activity=discord.Activity(
         type=discord.ActivityType.watching,
         name="🎯 Уровни | /profile"
     ))
+    
     try:
         await bot.tree.sync()
         print("✅ Слеш-команды синхронизированы!")
     except Exception as e:
         print(f"❌ Ошибка синхронизации: {e}")
     
-    # ✅ Запускаем автосохранение
+    # Запускаем автосохранение
     auto_save.start()
     auto_save_webdav.start()
     print("💾 Автосохранение запущено (каждую минуту)")
@@ -456,8 +578,9 @@ async def slash_profile(interaction: discord.Interaction, member: discord.Member
     gender = profile.get("gender", "Не указан")
     bio = profile.get("bio", "Не указана")
     
-    if guild_id not in data or user_id not in data[guild_id]:
-        data[guild_id] = data.get(guild_id, {})
+    if guild_id not in data:
+        data[guild_id] = {}
+    if user_id not in data[guild_id]:
         data[guild_id][user_id] = {"xp": 0, "level": 0, "messages": 0}
         save_level_data(data)
     
@@ -516,7 +639,17 @@ async def slash_level(interaction: discord.Interaction):
     )
     embed.add_field(
         name="📋 Команды",
-        value="`/profile` - Красивый профиль\n`/top` - Топ\n`/rank` - Рейтинг\n`/settings` - Настройки (админ)\n`/webdav` - Проверка WebDAV (админ)\n`/autosave` - Управление автосохранением (админ)",
+        value="`/profile` - Красивый профиль\n"
+              "`/top` - Топ пользователей\n"
+              "`/rank` - Ваше место\n"
+              "`/voice_stats` - Голосовая статистика\n"
+              "`/settings` - Настройки (админ)\n"
+              "`/webdav` - Проверка WebDAV (админ)\n"
+              "`/webdav_files` - Файлы на WebDAV (админ)\n"
+              "`/webdav_sync` - Синхронизация с WebDAV (админ)\n"
+              "`/autosave` - Управление автосохранением (админ)\n"
+              "`/level_reload` - Перезагрузить данные (админ)\n"
+              "`/level_save` - Сохранить данные (админ)",
         inline=False
     )
     embed.set_footer(text="💡 Будьте активны!")
@@ -527,7 +660,7 @@ async def slash_top(interaction: discord.Interaction):
     data = load_level_data()
     guild_id = str(interaction.guild.id)
     
-    if guild_id not in data:
+    if guild_id not in data or not data[guild_id]:
         await interaction.response.send_message("📭 Нет активных пользователей")
         return
     
@@ -588,7 +721,48 @@ async def slash_rank(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed)
 
 # =====================================================
-#  ⚙️  НАСТРОЙКИ (ПОЛНОЕ МЕНЮ)
+#  🎤  СТАТИСТИКА ГОЛОСОВЫХ КАНАЛОВ
+# =====================================================
+
+@bot.tree.command(name="voice_stats", description="🎤 Статистика голосовой активности")
+@app_commands.describe(member="Участник (опционально)")
+async def slash_voice_stats(interaction: discord.Interaction, member: discord.Member = None):
+    if not member:
+        member = interaction.user
+    
+    voice_time = get_voice_time(member.id, interaction.guild.id)
+    
+    embed = discord.Embed(
+        title=f"🎤 Голосовая статистика {member.display_name}",
+        color=discord.Color.blue()
+    )
+    embed.set_thumbnail(url=member.avatar.url if member.avatar else member.default_avatar.url)
+    embed.add_field(
+        name="⏱️ Общее время",
+        value=f"**{format_time(voice_time)}**",
+        inline=True
+    )
+    
+    if member.voice and member.voice.channel:
+        embed.add_field(
+            name="🔊 Сейчас в канале",
+            value=f"**{member.voice.channel.name}**",
+            inline=True
+        )
+        embed.color = discord.Color.green()
+    else:
+        embed.add_field(
+            name="🔇 Статус",
+            value="Не в голосовом канале",
+            inline=True
+        )
+        embed.color = discord.Color.grey()
+    
+    embed.set_footer(text=f"🆔 {member.id}")
+    await interaction.response.send_message(embed=embed)
+
+# =====================================================
+#  ⚙️  НАСТРОЙКИ
 # =====================================================
 
 @bot.tree.command(name="settings", description="⚙️ Настройки (админ)")
@@ -604,7 +778,8 @@ async def slash_settings(interaction: discord.Interaction):
         name="📊 Текущие настройки",
         value=f"💬 XP за сообщение: **{config.get('message_xp', 1)}**\n"
               f"🎵 XP за голос: **{config.get('voice_xp', 2)}**\n"
-              f"⏱️ Интервал: **{config.get('voice_interval', 60)}** сек",
+              f"⏱️ Интервал: **{config.get('voice_interval', 60)}** сек\n"
+              f"📢 Оповещения: **{'Вкл' if config.get('level_up_message', True) else 'Выкл'}**",
         inline=False
     )
     await interaction.followup.send(embed=embed, view=FullSettingsView())
@@ -666,28 +841,10 @@ class FullSettingsView(ui.View):
         channel_btn.callback = self.channel_callback
         self.add_item(channel_btn)
         
-        stats_btn = ui.Button(
-            label="📊 Статистика",
-            style=ButtonStyle.secondary,
-            row=2,
-            custom_id="stats_settings"
-        )
-        stats_btn.callback = self.stats_callback
-        self.add_item(stats_btn)
-        
-        reset_btn = ui.Button(
-            label="🗑️ Сбросить всё",
-            style=ButtonStyle.danger,
-            row=3,
-            custom_id="reset_settings"
-        )
-        reset_btn.callback = self.reset_callback
-        self.add_item(reset_btn)
-        
         close_btn = ui.Button(
             label="❌ Закрыть",
             style=ButtonStyle.danger,
-            row=3,
+            row=2,
             custom_id="close_settings"
         )
         close_btn.callback = self.close_callback
@@ -700,10 +857,6 @@ class FullSettingsView(ui.View):
         return True
     
     async def msg_xp_callback(self, interaction: discord.Interaction):
-        if not interaction.user.guild_permissions.administrator:
-            await interaction.response.send_message("❌ Только администраторы!", ephemeral=True)
-            return
-        
         await interaction.response.defer()
         view = MsgXPView()
         embed = discord.Embed(
@@ -714,10 +867,6 @@ class FullSettingsView(ui.View):
         await interaction.followup.send(embed=embed, view=view)
     
     async def voice_xp_callback(self, interaction: discord.Interaction):
-        if not interaction.user.guild_permissions.administrator:
-            await interaction.response.send_message("❌ Только администраторы!", ephemeral=True)
-            return
-        
         await interaction.response.defer()
         view = VoiceXPView()
         embed = discord.Embed(
@@ -728,10 +877,6 @@ class FullSettingsView(ui.View):
         await interaction.followup.send(embed=embed, view=view)
     
     async def interval_callback(self, interaction: discord.Interaction):
-        if not interaction.user.guild_permissions.administrator:
-            await interaction.response.send_message("❌ Только администраторы!", ephemeral=True)
-            return
-        
         await interaction.response.defer()
         view = IntervalView()
         embed = discord.Embed(
@@ -742,10 +887,6 @@ class FullSettingsView(ui.View):
         await interaction.followup.send(embed=embed, view=view)
     
     async def notify_callback(self, interaction: discord.Interaction):
-        if not interaction.user.guild_permissions.administrator:
-            await interaction.response.send_message("❌ Только администраторы!", ephemeral=True)
-            return
-        
         config = load_config()
         config['level_up_message'] = not config.get('level_up_message', True)
         save_config(config)
@@ -759,65 +900,21 @@ class FullSettingsView(ui.View):
         await interaction.response.edit_message(embed=embed, view=self)
     
     async def channel_callback(self, interaction: discord.Interaction):
-        if not interaction.user.guild_permissions.administrator:
-            await interaction.response.send_message("❌ Только администраторы!", ephemeral=True)
-            return
-        
         modal = ChannelModal()
         await interaction.response.send_modal(modal)
     
-    async def stats_callback(self, interaction: discord.Interaction):
-        if not interaction.user.guild_permissions.administrator:
-            await interaction.response.send_message("❌ Только администраторы!", ephemeral=True)
-            return
-        
-        await interaction.response.defer()
-        
-        data = load_level_data()
-        guild_id = str(interaction.guild.id)
-        
-        total_users = len(data.get(guild_id, {}))
-        total_xp = sum(u.get("xp", 0) for u in data.get(guild_id, {}).values())
-        max_level = max((u.get("level", 0) for u in data.get(guild_id, {}).values()), default=0)
-        
-        embed = discord.Embed(
-            title="📊 Статистика сервера",
-            color=discord.Color.blue()
-        )
-        embed.add_field(name="👥 Участников", value=str(total_users), inline=True)
-        embed.add_field(name="⭐ Всего XP", value=str(total_xp), inline=True)
-        embed.add_field(name="🎯 Макс. уровень", value=str(max_level), inline=True)
-        
-        await interaction.followup.send(embed=embed, ephemeral=True)
-    
-    async def reset_callback(self, interaction: discord.Interaction):
-        if not interaction.user.guild_permissions.administrator:
-            await interaction.response.send_message("❌ Только администраторы!", ephemeral=True)
-            return
-        
-        embed = discord.Embed(
-            title="⚠️ Подтверждение",
-            description="Вы уверены, что хотите сбросить ВСЕ данные?",
-            color=discord.Color.red()
-        )
-        view = ConfirmResetView()
-        await interaction.response.edit_message(embed=embed, view=view)
-    
     async def close_callback(self, interaction: discord.Interaction):
-        if not interaction.user.guild_permissions.administrator:
-            await interaction.response.send_message("❌ Только администраторы!", ephemeral=True)
-            return
-        
         await interaction.message.delete()
         await interaction.response.send_message("✅ Меню закрыто", ephemeral=True)
 
 class MsgXPView(ui.View):
     def __init__(self):
         super().__init__(timeout=60)
+        current = load_config().get('message_xp', 1)
         for val in [1, 2, 3, 4, 5, 8, 10]:
             btn = ui.Button(
                 label=f"{val} XP",
-                style=ButtonStyle.primary if val == load_config().get('message_xp', 1) else ButtonStyle.secondary,
+                style=ButtonStyle.primary if val == current else ButtonStyle.secondary,
                 row=0 if val <= 5 else 1,
                 custom_id=f"msgxp_{val}"
             )
@@ -856,10 +953,11 @@ class MsgXPView(ui.View):
 class VoiceXPView(ui.View):
     def __init__(self):
         super().__init__(timeout=60)
+        current = load_config().get('voice_xp', 2)
         for val in [1, 2, 3, 4, 5, 8, 10, 15, 20]:
             btn = ui.Button(
                 label=f"{val} XP",
-                style=ButtonStyle.primary if val == load_config().get('voice_xp', 2) else ButtonStyle.secondary,
+                style=ButtonStyle.primary if val == current else ButtonStyle.secondary,
                 row=0 if val <= 5 else 1,
                 custom_id=f"voicexp_{val}"
             )
@@ -898,10 +996,11 @@ class VoiceXPView(ui.View):
 class IntervalView(ui.View):
     def __init__(self):
         super().__init__(timeout=60)
+        current = load_config().get('voice_interval', 60)
         for val in [15, 30, 45, 60, 90, 120, 180, 300]:
             btn = ui.Button(
                 label=f"{val}с",
-                style=ButtonStyle.primary if val == load_config().get('voice_interval', 60) else ButtonStyle.secondary,
+                style=ButtonStyle.primary if val == current else ButtonStyle.secondary,
                 row=0 if val <= 60 else 1,
                 custom_id=f"int_{val}"
             )
@@ -964,40 +1063,275 @@ class ChannelModal(ui.Modal, title="📌 Канал оповещений"):
             save_config(config)
             await interaction.response.send_message("✅ Канал сброшен", ephemeral=True)
 
-class ConfirmResetView(ui.View):
-    def __init__(self):
-        super().__init__(timeout=60)
+# =====================================================
+#  ☁️  КОМАНДЫ WEBDAV
+# =====================================================
+
+@bot.tree.command(name="webdav", description="☁️ Проверить подключение к WebDAV (админ)")
+@app_commands.default_permissions(administrator=True)
+async def slash_webdav(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
     
-    @ui.button(label="✅ Да, сбросить", style=ButtonStyle.danger, row=0)
-    async def confirm(self, interaction: discord.Interaction, button: ui.Button):
-        if not interaction.user.guild_permissions.administrator:
-            await interaction.response.send_message("❌ Только администраторы!", ephemeral=True)
-            return
-        
-        data = load_level_data()
-        voice_data = load_voice_time()
-        guild_id = str(interaction.guild.id)
-        
-        if guild_id in data:
-            del data[guild_id]
-            save_level_data(data)
-        if guild_id in voice_data:
-            del voice_data[guild_id]
-            save_voice_time(voice_data)
-        
-        embed = discord.Embed(
-            title="🗑️ Данные сброшены!",
-            color=discord.Color.red()
-        )
-        await interaction.response.edit_message(embed=embed, view=None)
+    success, message = test_webdav_connection()
     
-    @ui.button(label="❌ Отмена", style=ButtonStyle.secondary, row=0)
-    async def cancel(self, interaction: discord.Interaction, button: ui.Button):
+    if success:
         embed = discord.Embed(
-            title="✅ Отменено",
+            title="☁️ WebDAV подключён!",
+            description=f"Сервер: {WEBDAV_URL}",
             color=discord.Color.green()
         )
-        await interaction.response.edit_message(embed=embed, view=FullSettingsView())
+        try:
+            client = get_webdav_client()
+            if client:
+                files = client.list()
+                if files:
+                    embed.add_field(
+                        name="📁 Файлы на сервере",
+                        value="\n".join(files[:10]) if files else "Папка пуста",
+                        inline=False
+                    )
+                else:
+                    embed.add_field(
+                        name="📁 Файлы на сервере",
+                        value="Папка пуста",
+                        inline=False
+                    )
+        except Exception as e:
+            embed.add_field(
+                name="⚠️ Ошибка получения списка",
+                value=str(e),
+                inline=False
+            )
+    else:
+        embed = discord.Embed(
+            title="❌ WebDAV не подключён!",
+            description=message,
+            color=discord.Color.red()
+        )
+        embed.add_field(
+            name="💡 Решение",
+            value="Проверьте:\n1. Логин и пароль\n2. URL сервера\n3. Доступность сервера",
+            inline=False
+        )
+    
+    await interaction.followup.send(embed=embed, ephemeral=True)
+
+@bot.tree.command(name="webdav_files", description="📁 Показать файлы на WebDAV (админ)")
+@app_commands.default_permissions(administrator=True)
+async def slash_webdav_files(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+    
+    if not WEBDAV_LOGIN or not WEBDAV_PASSWORD:
+        await interaction.followup.send("❌ WebDAV не настроен!", ephemeral=True)
+        return
+    
+    try:
+        client = get_webdav_client()
+        if not client:
+            await interaction.followup.send("❌ Не удалось подключиться к WebDAV", ephemeral=True)
+            return
+        
+        files = client.list()
+        
+        embed = discord.Embed(
+            title="📁 Файлы на WebDAV",
+            description=f"Сервер: {WEBDAV_URL}",
+            color=discord.Color.blue()
+        )
+        
+        if files:
+            required_files = ["level_data.json", "voice_time.json", "user_profiles.json", "level_config.json"]
+            status = []
+            for f in required_files:
+                if f in files:
+                    status.append(f"✅ {f}")
+                else:
+                    status.append(f"❌ {f}")
+            
+            embed.add_field(
+                name="📋 Статус файлов",
+                value="\n".join(status),
+                inline=False
+            )
+            
+            embed.add_field(
+                name="📁 Все файлы",
+                value="\n".join(files[:15]) if files else "Папка пуста",
+                inline=False
+            )
+        else:
+            embed.add_field(
+                name="📁 Файлы",
+                value="Папка пуста",
+                inline=False
+            )
+        
+        await interaction.followup.send(embed=embed, ephemeral=True)
+    except Exception as e:
+        await interaction.followup.send(f"❌ Ошибка: {e}", ephemeral=True)
+
+@bot.tree.command(name="webdav_sync", description="🔄 Синхронизировать данные с WebDAV (админ)")
+@app_commands.default_permissions(administrator=True)
+async def slash_webdav_sync(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+    
+    if not WEBDAV_LOGIN or not WEBDAV_PASSWORD:
+        await interaction.followup.send("❌ WebDAV не настроен!", ephemeral=True)
+        return
+    
+    embed = discord.Embed(
+        title="🔄 Синхронизация с WebDAV",
+        color=discord.Color.blue()
+    )
+    
+    try:
+        # Загружаем с WebDAV
+        data = download_from_webdav("level_data.json")
+        if data:
+            save_level_data(data)
+            embed.add_field("✅ level_data.json", "Синхронизирован", inline=False)
+        else:
+            data = load_level_data()
+            upload_to_webdav("level_data.json", data)
+            embed.add_field("📤 level_data.json", "Загружен на WebDAV", inline=False)
+        
+        voice = download_from_webdav("voice_time.json")
+        if voice:
+            save_voice_time(voice)
+            embed.add_field("✅ voice_time.json", "Синхронизирован", inline=False)
+        else:
+            voice = load_voice_time()
+            upload_to_webdav("voice_time.json", voice)
+            embed.add_field("📤 voice_time.json", "Загружен на WebDAV", inline=False)
+        
+        profiles = download_from_webdav("user_profiles.json")
+        if profiles:
+            save_profiles(profiles)
+            embed.add_field("✅ user_profiles.json", "Синхронизирован", inline=False)
+        else:
+            profiles = load_profiles()
+            upload_to_webdav("user_profiles.json", profiles)
+            embed.add_field("📤 user_profiles.json", "Загружен на WebDAV", inline=False)
+        
+        config = download_from_webdav("level_config.json")
+        if config:
+            save_config(config)
+            embed.add_field("✅ level_config.json", "Синхронизирован", inline=False)
+        else:
+            config = load_config()
+            upload_to_webdav("level_config.json", config)
+            embed.add_field("📤 level_config.json", "Загружен на WebDAV", inline=False)
+        
+        embed.color = discord.Color.green()
+        embed.description = "✅ Все данные синхронизированы!"
+        
+    except Exception as e:
+        embed.color = discord.Color.red()
+        embed.description = f"❌ Ошибка: {e}"
+    
+    await interaction.followup.send(embed=embed, ephemeral=True)
+
+# =====================================================
+#  💾  УПРАВЛЕНИЕ АВТОСОХРАНЕНИЕМ
+# =====================================================
+
+@bot.tree.command(name="autosave", description="💾 Управление автосохранением (админ)")
+@app_commands.default_permissions(administrator=True)
+@app_commands.describe(action="start, stop, status")
+async def slash_autosave(interaction: discord.Interaction, action: str):
+    await interaction.response.defer(ephemeral=True)
+    
+    if action.lower() == "start":
+        if auto_save.is_running():
+            await interaction.followup.send("ℹ️ Автосохранение уже запущено!", ephemeral=True)
+            return
+        auto_save.start()
+        auto_save_webdav.start()
+        await interaction.followup.send("✅ Автосохранение запущено!", ephemeral=True)
+    
+    elif action.lower() == "stop":
+        if not auto_save.is_running():
+            await interaction.followup.send("ℹ️ Автосохранение уже остановлено!", ephemeral=True)
+            return
+        auto_save.cancel()
+        auto_save_webdav.cancel()
+        await interaction.followup.send("⏹️ Автосохранение остановлено!", ephemeral=True)
+    
+    elif action.lower() == "status":
+        embed = discord.Embed(
+            title="💾 Статус автосохранения",
+            color=discord.Color.blue()
+        )
+        embed.add_field(
+            name="📁 Локальное сохранение",
+            value="✅ Запущено (каждую минуту)" if auto_save.is_running() else "❌ Остановлено",
+            inline=True
+        )
+        embed.add_field(
+            name="☁️ WebDAV сохранение",
+            value="✅ Запущено (каждые 5 минут)" if auto_save_webdav.is_running() else "❌ Остановлено",
+            inline=True
+        )
+        embed.add_field(
+            name="💾 Последнее сохранение",
+            value=datetime.now().strftime("%H:%M:%S"),
+            inline=True
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
+    
+    else:
+        await interaction.followup.send("❌ Доступные действия: `start`, `stop`, `status`", ephemeral=True)
+
+# =====================================================
+#  📝  КОМАНДЫ ДЛЯ УПРАВЛЕНИЯ ДАННЫМИ
+# =====================================================
+
+@bot.tree.command(name="level_reload", description="🔄 Перезагрузить данные (админ)")
+@app_commands.default_permissions(administrator=True)
+async def slash_level_reload(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+    
+    try:
+        config = load_config()
+        data = load_level_data()
+        
+        embed = discord.Embed(
+            title="🔄 Данные перезагружены!",
+            description="✅ Конфиг и данные успешно перезагружены",
+            color=discord.Color.green()
+        )
+        embed.add_field(
+            name="📊 Конфиг",
+            value=f"XP за сообщ: {config.get('message_xp', 1)}\nXP за голос: {config.get('voice_xp', 2)}\nИнтервал: {config.get('voice_interval', 60)} сек",
+            inline=False
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
+    except Exception as e:
+        await interaction.followup.send(f"❌ Ошибка: {e}", ephemeral=True)
+
+@bot.tree.command(name="level_save", description="💾 Сохранить данные (админ)")
+@app_commands.default_permissions(administrator=True)
+async def slash_level_save(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+    
+    try:
+        config = load_config()
+        save_config(config)
+        data = load_level_data()
+        save_level_data(data)
+        voice_data = load_voice_time()
+        save_voice_time(voice_data)
+        profiles = load_profiles()
+        save_profiles(profiles)
+        
+        embed = discord.Embed(
+            title="💾 Данные сохранены!",
+            description="✅ Все данные сохранены локально и на WebDAV",
+            color=discord.Color.green()
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
+    except Exception as e:
+        await interaction.followup.send(f"❌ Ошибка: {e}", ephemeral=True)
 
 # =====================================================
 #  💬  XP ЗА СООБЩЕНИЯ
@@ -1146,159 +1480,6 @@ async def on_voice_state_update(member, before, after):
             del voice_tracker[user_id][guild_id]
             if not voice_tracker[user_id]:
                 del voice_tracker[user_id]
-
-# =====================================================
-#  ☁️  КОМАНДА ДЛЯ ПРОВЕРКИ WEBDAV
-# =====================================================
-
-@bot.tree.command(name="webdav", description="☁️ Проверить подключение к WebDAV (админ)")
-@app_commands.default_permissions(administrator=True)
-async def slash_webdav(interaction: discord.Interaction):
-    await interaction.response.defer(ephemeral=True)
-    
-    if not WEBDAV_LOGIN or not WEBDAV_PASSWORD:
-        embed = discord.Embed(
-            title="❌ WebDAV не настроен!",
-            description="Установите переменные окружения:\n`WEBDAV_LOGIN` и `WEBDAV_PASSWORD`",
-            color=discord.Color.red()
-        )
-        await interaction.followup.send(embed=embed, ephemeral=True)
-        return
-    
-    try:
-        client = get_webdav_client()
-        files = client.list()
-        
-        embed = discord.Embed(
-            title="☁️ WebDAV подключён!",
-            description=f"Сервер: {WEBDAV_URL}",
-            color=discord.Color.green()
-        )
-        
-        if files:
-            embed.add_field(
-                name="📁 Файлы на сервере",
-                value="\n".join(files[:10]) if files else "Папка пуста",
-                inline=False
-            )
-        else:
-            embed.add_field(
-                name="📁 Файлы на сервере",
-                value="Папка пуста",
-                inline=False
-            )
-        
-        await interaction.followup.send(embed=embed, ephemeral=True)
-    except Exception as e:
-        embed = discord.Embed(
-            title="❌ Ошибка подключения к WebDAV",
-            description=f"```\n{str(e)}\n```",
-            color=discord.Color.red()
-        )
-        embed.add_field(
-            name="💡 Решение",
-            value="Проверьте:\n1. Логин и пароль\n2. URL сервера\n3. Доступность сервера",
-            inline=False
-        )
-        await interaction.followup.send(embed=embed, ephemeral=True)
-
-# =====================================================
-#  💾  УПРАВЛЕНИЕ АВТОСОХРАНЕНИЕМ
-# =====================================================
-
-@bot.tree.command(name="autosave", description="💾 Управление автосохранением (админ)")
-@app_commands.default_permissions(administrator=True)
-@app_commands.describe(action="start, stop, status")
-async def slash_autosave(interaction: discord.Interaction, action: str):
-    await interaction.response.defer(ephemeral=True)
-    
-    if action == "start":
-        if auto_save.is_running():
-            await interaction.followup.send("ℹ️ Автосохранение уже запущено!", ephemeral=True)
-            return
-        auto_save.start()
-        auto_save_webdav.start()
-        await interaction.followup.send("✅ Автосохранение запущено!", ephemeral=True)
-    
-    elif action == "stop":
-        if not auto_save.is_running():
-            await interaction.followup.send("ℹ️ Автосохранение уже остановлено!", ephemeral=True)
-            return
-        auto_save.cancel()
-        auto_save_webdav.cancel()
-        await interaction.followup.send("⏹️ Автосохранение остановлено!", ephemeral=True)
-    
-    elif action == "status":
-        embed = discord.Embed(
-            title="💾 Статус автосохранения",
-            color=discord.Color.blue()
-        )
-        embed.add_field(
-            name="📁 Локальное сохранение",
-            value="✅ Запущено (каждую минуту)" if auto_save.is_running() else "❌ Остановлено",
-            inline=True
-        )
-        embed.add_field(
-            name="☁️ WebDAV сохранение",
-            value="✅ Запущено (каждые 5 минут)" if auto_save_webdav.is_running() else "❌ Остановлено",
-            inline=True
-        )
-        embed.add_field(
-            name="💾 Последнее сохранение",
-            value=datetime.now().strftime("%H:%M:%S"),
-            inline=True
-        )
-        await interaction.followup.send(embed=embed, ephemeral=True)
-    
-    else:
-        await interaction.followup.send("❌ Доступные действия: `start`, `stop`, `status`", ephemeral=True)
-
-# =====================================================
-#  📝  КОМАНДЫ ДЛЯ УПРАВЛЕНИЯ ДАННЫМИ
-# =====================================================
-
-@bot.tree.command(name="level_reload", description="🔄 Перезагрузить данные (админ)")
-@app_commands.default_permissions(administrator=True)
-async def slash_level_reload(interaction: discord.Interaction):
-    await interaction.response.defer(ephemeral=True)
-    
-    try:
-        config = load_config()
-        data = load_level_data()
-        
-        embed = discord.Embed(
-            title="🔄 Данные перезагружены!",
-            description="✅ Конфиг и данные успешно перезагружены",
-            color=discord.Color.green()
-        )
-        embed.add_field(
-            name="📊 Конфиг",
-            value=f"XP за сообщ: {config.get('message_xp', 1)}\nXP за голос: {config.get('voice_xp', 2)}\nИнтервал: {config.get('voice_interval', 60)} сек",
-            inline=False
-        )
-        await interaction.followup.send(embed=embed, ephemeral=True)
-    except Exception as e:
-        await interaction.followup.send(f"❌ Ошибка: {e}", ephemeral=True)
-
-@bot.tree.command(name="level_save", description="💾 Сохранить данные (админ)")
-@app_commands.default_permissions(administrator=True)
-async def slash_level_save(interaction: discord.Interaction):
-    await interaction.response.defer(ephemeral=True)
-    
-    try:
-        config = load_config()
-        save_config(config)
-        data = load_level_data()
-        save_level_data(data)
-        
-        embed = discord.Embed(
-            title="💾 Данные сохранены!",
-            description="✅ Все данные сохранены",
-            color=discord.Color.green()
-        )
-        await interaction.followup.send(embed=embed, ephemeral=True)
-    except Exception as e:
-        await interaction.followup.send(f"❌ Ошибка: {e}", ephemeral=True)
 
 # =====================================================
 #  🚀  ЗАПУСК
